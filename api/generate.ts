@@ -17,8 +17,8 @@ async function arcadsUpload(buffer: Buffer, fileType: string): Promise<string> {
     headers: { 'Authorization': ARCADS_BASIC_AUTH, 'Content-Type': 'application/json' },
     body: JSON.stringify({ fileType }),
   });
-  const { presignedUrl, filePath } = await presign.json();
-  await fetch(presignedUrl, { method: 'PUT', headers: { 'Content-Type': fileType }, body: buffer });
+  const { presignedUrl, filePath } = await presign.json() as { presignedUrl: string; filePath: string };
+  await fetch(presignedUrl, { method: 'PUT', headers: { 'Content-Type': fileType }, body: new Uint8Array(buffer) });
   return filePath;
 }
 
@@ -26,7 +26,7 @@ async function supabaseUpload(buffer: Buffer, fileName: string, contentType: str
   await fetch(`${SUPABASE_URL}/storage/v1/object/ugc-assets/temp/${fileName}`, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`, 'Content-Type': contentType },
-    body: buffer,
+    body: new Uint8Array(buffer),
   });
   return `${SUPABASE_URL}/storage/v1/object/public/ugc-assets/temp/${fileName}`;
 }

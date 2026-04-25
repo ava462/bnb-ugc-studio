@@ -58,7 +58,7 @@ async function pollFal(statusUrl: string, responseUrl: string) {
     return { status: 'complete', videoUrl, progress: 100 };
   }
   if (status === 'FAILED') {
-    return { status: 'failed', error: resultData?.detail || 'fal.ai generation failed', progress: 0 };
+    return { status: 'failed', error: data?.detail || 'fal.ai generation failed', progress: 0 };
   }
   return { status: 'generating', progress: 50, statusText: `fal.ai: ${data.status}` };
 }
