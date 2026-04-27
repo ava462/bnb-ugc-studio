@@ -313,15 +313,10 @@ function App() {
       setStatusText('Starting generation...')
       setProgress(10)
 
-      // For 'custom' path, resolve to 'arcads' if Jordan pack is selected, otherwise 'fal'
-      const apiPath = selectedPath === 'custom'
-        ? (selectedPack?.speaker?.toLowerCase() === 'jordan' && !selectedFaceUrl ? 'arcads' : 'fal')
-        : selectedPath
-
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: apiPath, parameters: params }),
+        body: JSON.stringify({ path: selectedPath, parameters: params }),
       })
 
       if (!res.ok) {
@@ -333,23 +328,18 @@ function App() {
 
       if (genResult.error) throw new Error(genResult.error)
 
-      setStatusText('Generating video...')
+      setStatusText('Generating with Seedance 2.0...')
       setProgress(20)
 
-      // Build the correct polling query string based on what generate returned
-      const pollQuery = new URLSearchParams()
-      pollQuery.set('pollType', genResult.pollType)
-      if (genResult.assetId) pollQuery.set('assetId', genResult.assetId)
-      if (genResult.requestId) pollQuery.set('requestId', genResult.requestId)
-      if (genResult.statusUrl) pollQuery.set('statusUrl', genResult.statusUrl)
-      if (genResult.responseUrl) pollQuery.set('responseUrl', genResult.responseUrl)
+      const assetId = genResult.assetId
+      if (!assetId) throw new Error('No assetId returned')
 
       // Poll for status
       let pollCount = 0
       pollRef.current = setInterval(async () => {
         pollCount++
         try {
-          const statusRes = await fetch(`/api/status?${pollQuery.toString()}`)
+          const statusRes = await fetch(`/api/status?assetId=${assetId}`)
           if (!statusRes.ok) return // keep polling
 
           const statusData = await statusRes.json()
@@ -370,10 +360,9 @@ function App() {
             return
           }
 
-          // Increment progress gradually
           const newProgress = Math.min(20 + pollCount * 3, 90)
           setProgress(newProgress)
-          setStatusText(statusData.statusText || `Processing... (${Math.round(pollCount * 5)}s)`)
+          setStatusText(statusData.statusText || 'Generating with Seedance 2.0...')
         } catch {
           // Keep polling on network errors
         }
