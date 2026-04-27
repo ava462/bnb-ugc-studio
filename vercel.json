@@ -2,6 +2,9 @@
   "functions": {
     "api/generate.ts": { "maxDuration": 300 },
     "api/status.ts": { "maxDuration": 30 },
-    "api/interpret.ts": { "maxDuration": 60 }
+    "api/interpret.ts": { "maxDuration": 60 },
+    "api/voice-preview.ts": { "maxDuration": 30 },
+    "api/references.ts": { "maxDuration": 30 },
+    "api/upload.ts": { "maxDuration": 30 }
   }
 }

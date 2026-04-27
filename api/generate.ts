@@ -8,6 +8,7 @@ const FISH_AUDIO_VOICE_ID = process.env.FISH_AUDIO_VOICE_ID || '';
 const FAL_KEY = process.env.FAL_KEY!;
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY!;
+const JORDAN_FACE_URL = process.env.JORDAN_FACE_URL || 'https://zyiidveeixbbjpswruyn.supabase.co/storage/v1/object/public/ugc-assets/face-references/jordan-pham-hero.jpg';
 
 // ── Helpers ──
 
@@ -127,8 +128,8 @@ async function generateFalOmniHuman(params: any): Promise<{ requestId: string; p
   // Upload audio to Supabase CDN (fal.ai needs public URLs)
   const audioUrl = await supabaseUpload(audioBuffer, `fal-audio-${Date.now()}.mp3`, 'audio/mpeg');
 
-  // Face image URL — expect it passed in params
-  const faceUrl = params.faceImageUrl;
+  // Face image URL — use uploaded URL or default to Jordan's face
+  const faceUrl = params.faceImageUrl || JORDAN_FACE_URL;
   if (!faceUrl) throw new Error('Face image URL required for fal.ai path');
 
   // Submit to fal.ai
@@ -169,6 +170,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       case 'fal':
         result = await generateFalOmniHuman(parameters);
         break;
+      case 'custom': {
+        // Merged path: route to arcads (Jordan clone) or fal (custom face) based on speaker
+        const speaker = parameters.speaker || 'jordan';
+        if (speaker === 'jordan' && !parameters.faceImageUrl) {
+          result = await generateArcadsOmniHuman(parameters);
+        } else {
+          result = await generateFalOmniHuman(parameters);
+        }
+        break;
+      }
       default:
         return res.status(400).json({ error: `Unknown path: ${path}` });
     }

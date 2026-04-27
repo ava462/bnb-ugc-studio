@@ -1,26 +1,24 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import './App.css'
 import {
-  Drama, Target, Dna, Sparkles, Download, RotateCcw,
-  ChevronDown, Upload, X, Loader2, Play, Pause, Volume2, VolumeX, AlertCircle
+  Drama, Target, Sparkles, Download, RotateCcw,
+  ChevronDown, Upload, X, Loader2, Play, Pause, Volume2, VolumeX, AlertCircle, Plus, Music
 } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type ProductionPath = 'seedance' | 'arcads' | 'fal' | null
+type ProductionPath = 'seedance' | 'custom' | null
 
 // ── Path definitions ───────────────────────────────────────────────────────────
 
 const PATHS = [
   { id: 'seedance' as const, title: 'AI Influencer', subtitle: 'Seedance 2.0', description: '13 AI characters, bulk testing', timing: '~3min', cost: '~720 credits', icon: Drama },
-  { id: 'arcads' as const, title: "Jordan's Face", subtitle: 'Arcads OmniHuman + Fish Audio', description: "Jordan's clone, hero ads", timing: '~5min', cost: 'TBD credits', icon: Target },
-  { id: 'fal' as const, title: 'Custom Face', subtitle: 'fal.ai OmniHuman + Fish Audio', description: 'Any face photo, most flexible', timing: '~5min', cost: '~$0.05', icon: Dna },
+  { id: 'custom' as const, title: 'Custom Character', subtitle: 'Fish Audio + OmniHuman', description: 'Use Jordan or upload any face', timing: '~5min', cost: '~$0.06', icon: Target },
 ]
 
 const BRAIN_DUMP_PLACEHOLDERS: Record<string, string> = {
   seedance: '15 second testimonial ad. Young Australian guy, early 20s, on his apartment balcony at golden hour. Excited about replacing his income with Airbnb. Selfie cam, casual hoodie. Hook with the money result first, then quick backstory, then the shift moment. CTA to BNBSuccess.com.au.',
-  arcads: "15 second ad with Jordan talking about how you don't need to own property. Excited hook, then calm explanation, confident close. Result-first hook style. CTA to link in bio.",
-  fal: "15 second student testimonial about making $5K in their first month while keeping their day job. Warm, relatable tone. Curiosity hook.",
+  custom: "15 second ad with Jordan talking about how you don't need to own property. Excited hook, then calm explanation, confident close. Result-first hook style. CTA to link in bio. Or use a custom face — 15 second student testimonial about making $5K in their first month. Warm, relatable tone. Curiosity hook.",
 }
 
 const SETTINGS = ['Modern apartment', 'Office / workspace', 'Coffee shop', 'Beach / outdoor', 'Studio (plain bg)', 'Luxury interior', 'Urban street', 'Gym / fitness']
@@ -89,13 +87,26 @@ function App() {
   const [influencer, setInfluencer] = useState('Auto-select')
   const [realism, setRealism] = useState(true)
 
-  // Voice params (arcads/fal)
+  // Voice params (custom path)
   const [emotion, setEmotion] = useState('Confident')
   const [voiceTemp, setVoiceTemp] = useState(0.7)
   const [voiceSpeed, setVoiceSpeed] = useState(1.0)
-  const [faceImage, setFaceImage] = useState<File | null>(null)
-  const [faceImagePreview, setFaceImagePreview] = useState<string | null>(null)
+  const [isUploadingFace, setIsUploadingFace] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
+
+  // Reference library state
+  const [refPacks, setRefPacks] = useState<any[]>([])
+  const [selectedPack, setSelectedPack] = useState<any>(null)
+  const [selectedFaceUrl, setSelectedFaceUrl] = useState<string | null>(null)
+  const [isLoadingRefs, setIsLoadingRefs] = useState(false)
+  const [voicePreviewAudio, setVoicePreviewAudio] = useState<string | null>(null)
+  const [isPreviewingVoice, setIsPreviewingVoice] = useState(false)
+  const [newPackName, setNewPackName] = useState('')
+  const [newPackSpeaker, setNewPackSpeaker] = useState('')
+  const [showNewPackForm, setShowNewPackForm] = useState(false)
+  // Influence weights
+  const [faceWeight, setFaceWeight] = useState(0.8)
+  const [styleWeight, setStyleWeight] = useState(0.5)
 
   // Video player
   const [isPlaying, setIsPlaying] = useState(false)
@@ -109,6 +120,89 @@ function App() {
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
+  // ── Load reference packs ────────────────────────────────────────────────────
+
+  const loadRefPacks = useCallback(async () => {
+    setIsLoadingRefs(true)
+    try {
+      const res = await fetch('/api/references?action=list')
+      if (!res.ok) throw new Error('Failed to load reference packs')
+      const data = await res.json()
+      setRefPacks(data.packs || [])
+      // Auto-select jordan pack if it exists and nothing is selected
+      if (!selectedPack) {
+        const jordan = (data.packs || []).find((p: any) => p.speaker?.toLowerCase() === 'jordan')
+        if (jordan) setSelectedPack(jordan)
+      }
+    } catch (err: any) {
+      console.error('Failed to load ref packs:', err.message)
+    } finally {
+      setIsLoadingRefs(false)
+    }
+  }, [selectedPack])
+
+  useEffect(() => {
+    if (selectedPath === 'custom') loadRefPacks()
+  }, [selectedPath, loadRefPacks])
+
+  // ── Voice preview ───────────────────────────────────────────────────────────
+
+  const handleVoicePreview = async () => {
+    if (!script.trim()) return
+    setIsPreviewingVoice(true)
+    try {
+      const res = await fetch('/api/voice-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: script.slice(0, 200), voiceId: selectedPack?.voiceId, emotion: emotion.toLowerCase(), speed: voiceSpeed, temperature: voiceTemp }),
+      })
+      if (!res.ok) throw new Error('Preview failed')
+      const data = await res.json()
+      setVoicePreviewAudio(data.audio)
+    } catch (err: any) { setError(err.message) }
+    finally { setIsPreviewingVoice(false) }
+  }
+
+  // ── Create character pack ───────────────────────────────────────────────────
+
+  const handleCreatePack = async () => {
+    if (!newPackName.trim() || !newPackSpeaker.trim()) return
+    try {
+      const res = await fetch('/api/references?action=create', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newPackName, speaker: newPackSpeaker }),
+      })
+      if (!res.ok) throw new Error('Create failed')
+      setShowNewPackForm(false)
+      setNewPackName(''); setNewPackSpeaker('')
+      loadRefPacks()
+    } catch (err: any) { setError(err.message) }
+  }
+
+  // ── Upload face to selected pack ────────────────────────────────────────────
+
+  const handleUploadToPack = async (file: File) => {
+    if (!selectedPack) return
+    setIsUploadingFace(true)
+    try {
+      const reader = new FileReader()
+      const dataUri = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+      const res = await fetch('/api/references?action=upload', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: dataUri, speaker: selectedPack.speaker, filename: `${selectedPack.speaker}-${Date.now()}.${file.name.split('.').pop()}` }),
+      })
+      if (!res.ok) throw new Error('Upload failed')
+      const { url } = await res.json()
+      setSelectedFaceUrl(url)
+      loadRefPacks()
+    } catch (err: any) { setError(err.message) }
+    finally { setIsUploadingFace(false) }
+  }
+
   // ── Formulate: Brain dump → Claude → parameters ────────────────────────────
 
   const handleFormulate = async () => {
@@ -116,10 +210,12 @@ function App() {
     setIsFormulating(true)
     setError('')
     try {
+      // For interpret API, 'custom' maps to 'fal' so Claude generates the right parameter shape
+      const interpretPath = selectedPath === 'custom' ? 'fal' : selectedPath
       const res = await fetch('/api/interpret', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: selectedPath, brainDump }),
+        body: JSON.stringify({ path: interpretPath, brainDump }),
       })
       if (!res.ok) {
         const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
@@ -155,7 +251,7 @@ function App() {
         if (data.apiParams?.aspectRatio) setAspectRatio(data.apiParams.aspectRatio)
         if (data.influencer?.suggested) setInfluencer(data.influencer.suggested)
       } else {
-        // arcads or fal
+        // custom path
         if (data.script?.dialogue) setScript(data.script.dialogue)
         else if (data.script?.dialogueTagged) setScript(data.script.dialogueTagged)
         if (data.voice?.emotionTags?.[0]) {
@@ -191,13 +287,15 @@ function App() {
         influencer: { suggested: influencer === 'Auto-select' ? 'jayden' : influencer },
       }
     }
-    // arcads or fal
+    // custom path
+    const resolvedFaceUrl = selectedFaceUrl || 'https://bnb-ugc-assets.s3.ap-southeast-2.amazonaws.com/references/jordan/jordan-default.jpg'
     return {
       script: { dialogue: script, dialogueTagged: `[${emotion.toLowerCase()}] ${script}` },
       voice: { emotionTags: [emotion.toLowerCase()], temperature: voiceTemp, speed: voiceSpeed },
-      ...(selectedPath === 'fal' && faceImagePreview ? { faceImageUrl: faceImagePreview } : {}),
+      faceImageUrl: resolvedFaceUrl,
+      influenceWeights: { face: faceWeight, style: styleWeight },
     }
-  }, [selectedPath, script, age, gender, hair, skin, wardrobe, setting, camera, lighting, duration, aspectRatio, influencer, realism, emotion, voiceTemp, voiceSpeed, faceImagePreview])
+  }, [selectedPath, script, age, gender, hair, skin, wardrobe, setting, camera, lighting, duration, aspectRatio, influencer, realism, emotion, voiceTemp, voiceSpeed, selectedFaceUrl, faceWeight, styleWeight])
 
   // ── Generate video ─────────────────────────────────────────────────────────
 
@@ -212,25 +310,18 @@ function App() {
     try {
       const params = buildApiParams()
 
-      // For fal path with local file, upload to Supabase first
-      if (selectedPath === 'fal' && faceImage && !params.faceImageUrl?.startsWith('http')) {
-        setStatusText('Uploading face image...')
-        const formData = new FormData()
-        formData.append('file', faceImage)
-        // We'd need a file upload API route — for now, skip face upload from browser
-        // The faceImagePreview is a blob URL which won't work remotely
-        setError('Face image upload from browser not yet supported. Use the CLI path for custom faces.')
-        setIsGenerating(false)
-        return
-      }
-
       setStatusText('Starting generation...')
       setProgress(10)
+
+      // For 'custom' path, resolve to 'arcads' if Jordan pack is selected, otherwise 'fal'
+      const apiPath = selectedPath === 'custom'
+        ? (selectedPack?.speaker?.toLowerCase() === 'jordan' && !selectedFaceUrl ? 'arcads' : 'fal')
+        : selectedPath
 
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: selectedPath, parameters: params }),
+        body: JSON.stringify({ path: apiPath, parameters: params }),
       })
 
       if (!res.ok) {
@@ -300,20 +391,7 @@ function App() {
     if (pollRef.current) clearInterval(pollRef.current)
   }
 
-  // ── File handling ──────────────────────────────────────────────────────────
-
-  const handleFileDrop = (e: React.DragEvent) => {
-    e.preventDefault(); setIsDragging(false)
-    const file = e.dataTransfer.files[0]
-    if (file?.type.startsWith('image/')) { setFaceImage(file); setFaceImagePreview(URL.createObjectURL(file)) }
-  }
-
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) { setFaceImage(file); setFaceImagePreview(URL.createObjectURL(file)) }
-  }
-
-  const creditEstimate = selectedPath === 'seedance' ? `~${Math.round(duration * 48)} credits` : selectedPath === 'arcads' ? 'TBD credits + ~$0.01 Fish Audio' : '~$0.06 total'
+  const creditEstimate = selectedPath === 'seedance' ? `~${Math.round(duration * 48)} credits` : '~$0.06 total'
 
   // ── Render: Seedance parameters ────────────────────────────────────────────
 
@@ -388,10 +466,159 @@ function App() {
     </div>
   )
 
-  // ── Render: Voice parameters (arcads/fal) ──────────────────────────────────
+  // ── Render: Custom Character parameters ──────────────────────────────────
 
-  const renderVoiceParams = () => (
+  const renderCustomParams = () => (
     <div className="space-y-6">
+
+      {/* Reference Library */}
+      <div className="border border-[#2A7B88]/15 rounded-xl p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Reference Library</h4>
+          <button onClick={() => setShowNewPackForm(!showNewPackForm)}
+            className="flex items-center gap-1.5 text-xs text-[#2A7B88] hover:text-[#D4A843] transition-colors">
+            <Plus className="w-3.5 h-3.5" />New Character
+          </button>
+        </div>
+
+        {/* New pack inline form */}
+        {showNewPackForm && (
+          <div className="flex items-end gap-3 bg-[#111827] rounded-lg p-3 border border-[#2A7B88]/20">
+            <div className="flex flex-col gap-1 flex-1">
+              <label className="text-xs text-[#9CA3AF]">Pack Name</label>
+              <input type="text" value={newPackName} onChange={(e) => setNewPackName(e.target.value)} placeholder="e.g. Sarah Testimonials"
+                className="bg-[#0D1117] border border-[#2A7B88]/30 rounded px-2.5 py-1.5 text-[#E5E7EB] text-sm focus:border-[#2A7B88]" />
+            </div>
+            <div className="flex flex-col gap-1 flex-1">
+              <label className="text-xs text-[#9CA3AF]">Speaker ID</label>
+              <input type="text" value={newPackSpeaker} onChange={(e) => setNewPackSpeaker(e.target.value)} placeholder="e.g. sarah"
+                className="bg-[#0D1117] border border-[#2A7B88]/30 rounded px-2.5 py-1.5 text-[#E5E7EB] text-sm focus:border-[#2A7B88]" />
+            </div>
+            <button onClick={handleCreatePack} disabled={!newPackName.trim() || !newPackSpeaker.trim()}
+              className="px-4 py-1.5 rounded text-sm font-semibold bg-[#D4A843] text-[#111827] hover:bg-[#D4A843]/90 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap">
+              Create
+            </button>
+            <button onClick={() => { setShowNewPackForm(false); setNewPackName(''); setNewPackSpeaker('') }}
+              className="p-1.5 text-[#9CA3AF] hover:text-red-400"><X className="w-4 h-4" /></button>
+          </div>
+        )}
+
+        {/* Pack grid */}
+        {isLoadingRefs ? (
+          <div className="flex items-center justify-center py-6 text-[#9CA3AF]">
+            <Loader2 className="w-5 h-5 animate-spin mr-2" />Loading packs...
+          </div>
+        ) : refPacks.length === 0 ? (
+          <div className="text-center py-6 text-sm text-[#9CA3AF]/60">
+            No reference packs found. Create one above or the API will use Jordan by default.
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            {refPacks.map((pack) => {
+              const isActive = selectedPack?.speaker === pack.speaker
+              const thumb = pack.faces?.[0]?.url
+              return (
+                <button key={pack.speaker} onClick={() => { setSelectedPack(pack); setSelectedFaceUrl(pack.faces?.[0]?.url || null) }}
+                  className={`relative text-left rounded-lg p-3 border transition-all ${isActive ? 'bg-[#1B2A4A] border-[#D4A843]/60 shadow-md shadow-[#D4A843]/10' : 'bg-[#111827] border-[#2A7B88]/20 hover:border-[#2A7B88]/50'}`}>
+                  {thumb ? (
+                    <img src={thumb} alt={pack.speaker} className="w-full h-20 object-cover rounded mb-2" />
+                  ) : (
+                    <div className="w-full h-20 bg-[#0D1117] rounded mb-2 flex items-center justify-center text-[#9CA3AF]/30">
+                      <Target className="w-8 h-8" />
+                    </div>
+                  )}
+                  <p className={`text-sm font-semibold truncate ${isActive ? 'text-[#D4A843]' : 'text-[#E5E7EB]'}`}>{pack.name || pack.speaker}</p>
+                  <p className="text-xs text-[#9CA3AF]/60">{pack.faces?.length || 0} face{pack.faces?.length !== 1 ? 's' : ''}</p>
+                  {isActive && <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#D4A843]" />}
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Selected pack face thumbnails */}
+        {selectedPack && selectedPack.faces?.length > 0 && (
+          <div className="space-y-2">
+            <label className="text-xs text-[#9CA3AF] font-medium">Select Reference Face</label>
+            <div className="flex gap-2 overflow-x-auto pb-2" style={{ scrollbarWidth: 'thin' }}>
+              {selectedPack.faces.map((face: any, idx: number) => {
+                const isSelected = selectedFaceUrl === face.url
+                return (
+                  <button key={idx} onClick={() => setSelectedFaceUrl(face.url)}
+                    className={`shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${isSelected ? 'border-[#D4A843] shadow-md shadow-[#D4A843]/20' : 'border-[#2A7B88]/20 hover:border-[#2A7B88]/50'}`}>
+                    <img src={face.url} alt={face.filename || `Face ${idx + 1}`} className="w-full h-full object-cover" />
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Face Upload */}
+      {selectedPack && (
+        <div className="border border-[#2A7B88]/15 rounded-xl p-4 space-y-4">
+          <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Upload New Face</h4>
+          <div onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }} onDragLeave={() => setIsDragging(false)}
+            onDrop={(e) => { e.preventDefault(); setIsDragging(false); const file = e.dataTransfer.files[0]; if (file?.type.startsWith('image/')) handleUploadToPack(file) }}
+            onClick={() => document.getElementById('pack-face-upload')?.click()}
+            className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition-all ${isDragging ? 'border-[#D4A843] bg-[#D4A843]/5' : 'border-[#2A7B88]/30 hover:border-[#2A7B88]'}`}>
+            {isUploadingFace ? (
+              <div className="flex items-center justify-center gap-2 text-[#D4A843]"><Loader2 className="w-5 h-5 animate-spin" />Uploading to {selectedPack.speaker}...</div>
+            ) : (
+              <>
+                <Upload className="w-6 h-6 text-[#9CA3AF] mx-auto mb-1.5" />
+                <p className="text-sm text-[#9CA3AF]">Drop a face image or click to browse</p>
+                <p className="text-xs text-[#9CA3AF]/60 mt-1">JPG, PNG, WebP -- added to {selectedPack.speaker}'s pack</p>
+              </>
+            )}
+            <input id="pack-face-upload" type="file" accept="image/jpeg,image/jpg,image/png,image/webp"
+              onChange={(e) => { const file = e.target.files?.[0]; if (file) handleUploadToPack(file) }} className="hidden" />
+          </div>
+          {!selectedFaceUrl && <p className="text-xs text-[#9CA3AF]/60">No face selected -- Jordan's default face will be used.</p>}
+        </div>
+      )}
+
+      {/* Voice */}
+      <div className="border border-[#2A7B88]/15 rounded-xl p-4 space-y-4">
+        <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Voice</h4>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-sm text-[#9CA3AF] font-medium">Emotion</label>
+          <div className="flex flex-wrap gap-2">
+            {EMOTIONS.map((e) => (
+              <button key={e} onClick={() => setEmotion(e)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${emotion === e ? 'bg-[#D4A843] text-[#111827]' : 'bg-[#111827] text-[#9CA3AF] border border-[#2A7B88]/30 hover:border-[#2A7B88]'}`}>
+                {e}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-6">
+          <SliderControl label="Temperature" min={0} max={1} step={0.05} value={voiceTemp} onChange={setVoiceTemp} />
+          <SliderControl label="Speed" min={0.5} max={2.0} step={0.05} value={voiceSpeed} onChange={setVoiceSpeed} suffix="x" />
+        </div>
+        <div className="flex items-center gap-3">
+          <button onClick={handleVoicePreview} disabled={!script.trim() || isPreviewingVoice}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${script.trim() && !isPreviewingVoice ? 'bg-[#2A7B88]/20 text-[#2A7B88] border border-[#2A7B88]/30 hover:bg-[#2A7B88]/30' : 'bg-[#111827] text-[#9CA3AF]/30 cursor-not-allowed'}`}>
+            {isPreviewingVoice ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Generating...</> : <><Music className="w-3.5 h-3.5" />Preview Voice</>}
+          </button>
+          {voicePreviewAudio && (
+            <audio controls src={voicePreviewAudio} className="h-8 flex-1" style={{ maxWidth: '280px' }} />
+          )}
+        </div>
+      </div>
+
+      {/* Influence Weights */}
+      <div className="border border-[#2A7B88]/15 rounded-xl p-4 space-y-4">
+        <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Influence Weights</h4>
+        <div className="grid grid-cols-2 gap-6">
+          <SliderControl label="Face Influence" min={0} max={1} step={0.05} value={faceWeight} onChange={setFaceWeight} />
+          <SliderControl label="Style Influence" min={0} max={1} step={0.05} value={styleWeight} onChange={setStyleWeight} />
+        </div>
+        <p className="text-xs text-[#9CA3AF]/50">Face: how strongly the reference face is matched. Style: how much the reference style affects the output.</p>
+      </div>
+
+      {/* Script */}
       <div className="flex flex-col gap-1.5">
         <label className="text-sm text-[#9CA3AF] font-medium">Script</label>
         <textarea value={script} onChange={(e) => setScript(e.target.value)} rows={5}
@@ -406,45 +633,6 @@ function App() {
             <span className="inline-block bg-[#2A7B88]/20 text-[#2A7B88] text-xs font-mono px-1.5 py-0.5 rounded mr-2">[{emotion.toLowerCase()}]</span>
             {script.replace(/\[.*?\]\s*/g, '')}
           </div>
-        </div>
-      )}
-      <div className="flex flex-col gap-1.5">
-        <label className="text-sm text-[#9CA3AF] font-medium">Emotion</label>
-        <div className="flex flex-wrap gap-2">
-          {EMOTIONS.map((e) => (
-            <button key={e} onClick={() => setEmotion(e)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${emotion === e ? 'bg-[#D4A843] text-[#111827]' : 'bg-[#111827] text-[#9CA3AF] border border-[#2A7B88]/30 hover:border-[#2A7B88]'}`}>
-              {e}
-            </button>
-          ))}
-        </div>
-      </div>
-      <div className="border border-[#2A7B88]/15 rounded-xl p-4 space-y-4">
-        <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Voice</h4>
-        <div className="grid grid-cols-2 gap-6">
-          <SliderControl label="Temperature" min={0} max={1} step={0.05} value={voiceTemp} onChange={setVoiceTemp} />
-          <SliderControl label="Speed" min={0.5} max={2.0} step={0.05} value={voiceSpeed} onChange={setVoiceSpeed} suffix="x" />
-        </div>
-      </div>
-      {selectedPath === 'fal' && (
-        <div className="border border-[#2A7B88]/15 rounded-xl p-4 space-y-4">
-          <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Face Image</h4>
-          {faceImagePreview ? (
-            <div className="relative inline-block">
-              <img src={faceImagePreview} alt="Face" className="w-32 h-32 object-cover rounded-xl border-2 border-[#2A7B88]/30" />
-              <button onClick={() => { setFaceImage(null); setFaceImagePreview(null) }}
-                className="absolute -top-2 -right-2 bg-red-500/80 hover:bg-red-500 text-white rounded-full p-1"><X className="w-3 h-3" /></button>
-            </div>
-          ) : (
-            <div onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }} onDragLeave={() => setIsDragging(false)} onDrop={handleFileDrop}
-              onClick={() => document.getElementById('face-upload')?.click()}
-              className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all ${isDragging ? 'border-[#D4A843] bg-[#D4A843]/5' : 'border-[#2A7B88]/30 hover:border-[#2A7B88]'}`}>
-              <Upload className="w-8 h-8 text-[#9CA3AF] mx-auto mb-2" />
-              <p className="text-sm text-[#9CA3AF]">Drop a face image here, or click to browse</p>
-              <input id="face-upload" type="file" accept="image/*" onChange={handleFileSelect} className="hidden" />
-            </div>
-          )}
-          <p className="text-xs text-[#9CA3AF]/60">Note: Face upload from browser requires the /api/upload route. For now, use the CLI premium-path.ts for custom faces.</p>
         </div>
       )}
     </div>
@@ -473,7 +661,7 @@ function App() {
         {/* Path Selector */}
         <section>
           <h2 className="text-sm font-semibold text-[#9CA3AF] uppercase tracking-wider mb-4">Production Path</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {PATHS.map((p) => {
               const Icon = p.icon
               const isActive = selectedPath === p.id
@@ -526,7 +714,7 @@ function App() {
               <h2 className="text-sm font-semibold text-[#9CA3AF] uppercase tracking-wider">Parameters</h2>
               <button onClick={() => setClaudeParams(null)} className="text-xs text-[#9CA3AF] hover:text-[#D4A843]">Back to Brain Dump</button>
             </div>
-            {selectedPath === 'seedance' ? renderSeedanceParams() : renderVoiceParams()}
+            {selectedPath === 'seedance' ? renderSeedanceParams() : renderCustomParams()}
           </section>
         )}
 
