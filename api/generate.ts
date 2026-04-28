@@ -167,6 +167,7 @@ async function generateCustom(params: any): Promise<{ assetId: string; pollType:
     audioEnabled: true,
     productId: ARCADS_PRODUCT_ID,
     referenceImages,
+    referenceAudios: [audioFilePath],
   };
 
   const genRes = await fetch('https://external-api.arcads.ai/v2/videos/generate', {
