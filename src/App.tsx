@@ -287,12 +287,16 @@ function App() {
         influencer: { suggested: influencer === 'Auto-select' ? 'jayden' : influencer },
       }
     }
-    // custom path
-    const resolvedFaceUrl = selectedFaceUrl || 'https://bnb-ugc-assets.s3.ap-southeast-2.amazonaws.com/references/jordan/jordan-default.jpg'
+    // custom path — sends to Seedance with Fish Audio voice + face references
+    const jordanDefault = 'https://zyiidveeixbbjpswruyn.supabase.co/storage/v1/object/public/ugc-assets/face-references/jordan-pham-hero.jpg'
+    const resolvedFaceUrl = selectedFaceUrl || jordanDefault
     return {
       script: { dialogue: script, dialogueTagged: `[${emotion.toLowerCase()}] ${script}` },
       voice: { emotionTags: [emotion.toLowerCase()], temperature: voiceTemp, speed: voiceSpeed },
       faceImageUrl: resolvedFaceUrl,
+      character: { description: selectedPack?.speaker === 'jordan' ? 'Young Asian-Australian man, early 20s, buzz cut, small earring, athletic build' : '' },
+      setting: { location: 'Casual indoor setting', timeOfDay: 'natural light' },
+      apiParams: { duration: 15, aspectRatio: '9:16', resolution: '720p' },
       influenceWeights: { face: faceWeight, style: styleWeight },
     }
   }, [selectedPath, script, age, gender, hair, skin, wardrobe, setting, camera, lighting, duration, aspectRatio, influencer, realism, emotion, voiceTemp, voiceSpeed, selectedFaceUrl, faceWeight, styleWeight])
