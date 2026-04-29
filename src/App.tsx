@@ -8,7 +8,7 @@ import {
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type ProductionPath = 'seedance' | 'custom' | null
+type ProductionPath = 'seedance' | 'custom' | 'voice' | null
 
 interface ReferencePack {
   id: string; name: string; type: string;
@@ -136,6 +136,20 @@ function App() {
   const [isSavingCharacter, setIsSavingCharacter] = useState(false)
   const [isDraggingSlot, setIsDraggingSlot] = useState<string | null>(null)
 
+  // Voice Only state
+  const [voiceModels, setVoiceModels] = useState<any[]>([])
+  const [selectedVoiceModel, setSelectedVoiceModel] = useState<any>(null)
+  const [manualVoiceId, setManualVoiceId] = useState('')
+  const [ttsAudio, setTtsAudio] = useState<string | null>(null)
+  const [isGeneratingTts, setIsGeneratingTts] = useState(false)
+  const [ttsFormat, setTtsFormat] = useState('mp3')
+  const [ttsSampleRate, setTtsSampleRate] = useState(44100)
+  const [ttsBitrate, setTtsBitrate] = useState(128)
+  const [showAddVoice, setShowAddVoice] = useState(false)
+  const [newVoiceName, setNewVoiceName] = useState('')
+  const [newVoiceId, setNewVoiceId] = useState('')
+  const [newVoiceDesc, setNewVoiceDesc] = useState('')
+
   // Video player
   const [isPlaying, setIsPlaying] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
@@ -178,6 +192,50 @@ function App() {
   useEffect(() => {
     if (selectedPath === 'custom') loadRefPacks()
   }, [selectedPath, loadRefPacks])
+
+  // ── Load voice models for Voice Only path ────────────────────────────────
+  useEffect(() => {
+    if (selectedPath === 'voice') {
+      fetch('/api/voice-models').then(r => r.json()).then(data => {
+        if (Array.isArray(data)) {
+          setVoiceModels(data)
+          const def = data.find((m: any) => m.is_default)
+          if (def && !selectedVoiceModel) setSelectedVoiceModel(def)
+        }
+      }).catch(() => {})
+    }
+  }, [selectedPath])
+
+  // ── TTS generation (Voice Only path) ──────────────────────────────────────
+  const handleGenerateTts = async () => {
+    if (!script.trim()) return
+    setIsGeneratingTts(true); setTtsAudio(null)
+    try {
+      const vid = selectedVoiceModel?.fish_audio_id || manualVoiceId || '14d07e89acda4214bd319865a7e1a888'
+      const res = await fetch('/api/tts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script, voiceId: vid, temperature: voiceTemp, topP: 0.7, speed: voiceSpeed, format: ttsFormat, sampleRate: ttsSampleRate, bitrate: ttsBitrate }),
+      })
+      if (!res.ok) throw new Error((await res.json()).error || 'TTS failed')
+      const data = await res.json()
+      setTtsAudio(data.audio)
+    } catch (err: any) { setError(err.message) }
+    finally { setIsGeneratingTts(false) }
+  }
+
+  // ── Save voice model ────────────────────────────────────────────────────────
+  const handleSaveVoiceModel = async () => {
+    if (!newVoiceName.trim() || !newVoiceId.trim()) return
+    try {
+      const res = await fetch('/api/voice-models', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newVoiceName, fishAudioId: newVoiceId, description: newVoiceDesc }) })
+      if (!res.ok) throw new Error('Save failed')
+      const model = await res.json()
+      setVoiceModels(prev => [...prev, model])
+      setSelectedVoiceModel(model)
+      setShowAddVoice(false); setNewVoiceName(''); setNewVoiceId(''); setNewVoiceDesc('')
+    } catch (err: any) { setError(err.message) }
+  }
 
   // ── Voice preview ───────────────────────────────────────────────────────────
 
@@ -708,6 +766,135 @@ function App() {
     </section>
   )
 
+  // ── Voice Only Path ─────────────────────────────────────────────────────────
+
+  const insertEmotionTag = (tag: string) => {
+    const ta = document.getElementById('voice-script') as HTMLTextAreaElement
+    if (!ta) return
+    const start = ta.selectionStart; const end = ta.selectionEnd
+    const newText = script.slice(0, start) + `[${tag}] ` + script.slice(end)
+    setScript(newText)
+    setTimeout(() => { ta.selectionStart = ta.selectionEnd = start + tag.length + 3; ta.focus() }, 0)
+  }
+
+  const renderVoicePath = () => (
+    <div className="space-y-6">
+      {/* Voice Model Selector */}
+      <section className="bg-[#1B2A4A]/60 border border-[#2A7B88]/20 rounded-xl p-6 space-y-4">
+        <h2 className="text-sm font-semibold text-[#9CA3AF] uppercase tracking-wider">Voice Model</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {voiceModels.map((m: any) => (
+            <button key={m.id} onClick={() => { setSelectedVoiceModel(m); setManualVoiceId('') }}
+              className={`text-left rounded-xl p-4 border transition-all ${selectedVoiceModel?.id === m.id ? 'bg-[#1B2A4A] border-[#D4A843]/60' : 'bg-[#1B2A4A]/60 border-[#2A7B88]/20 hover:border-[#2A7B88]/50'}`}>
+              <div className="flex items-center gap-2 mb-1">
+                <Music className={`w-4 h-4 ${selectedVoiceModel?.id === m.id ? 'text-[#D4A843]' : 'text-[#2A7B88]'}`} />
+                <span className={`text-sm font-medium ${selectedVoiceModel?.id === m.id ? 'text-[#D4A843]' : 'text-[#E5E7EB]'}`}>{m.name}</span>
+                {m.is_default && <span className="text-[8px] bg-[#D4A843]/20 text-[#D4A843] px-1.5 py-0.5 rounded-full">DEFAULT</span>}
+              </div>
+              <p className="text-[10px] text-[#9CA3AF]/60 font-mono">{m.fish_audio_id.slice(0, 16)}...</p>
+            </button>
+          ))}
+          {/* Add New */}
+          <button onClick={() => setShowAddVoice(!showAddVoice)}
+            className="rounded-xl p-4 border border-dashed border-[#2A7B88]/30 hover:border-[#D4A843] flex flex-col items-center justify-center gap-1 text-[#9CA3AF] hover:text-[#D4A843] transition-all">
+            <Plus className="w-5 h-5" /><span className="text-xs">Add New</span>
+          </button>
+          {/* Manual ID */}
+          <div className="rounded-xl p-4 border border-[#2A7B88]/20 bg-[#1B2A4A]/40">
+            <label className="text-[10px] text-[#9CA3AF] uppercase mb-1 block">Manual Voice ID</label>
+            <input type="text" value={manualVoiceId} onChange={(e) => { setManualVoiceId(e.target.value); setSelectedVoiceModel(null) }}
+              placeholder="Paste Fish Audio ID"
+              className="w-full bg-[#111827] border border-[#2A7B88]/30 rounded px-2 py-1.5 text-[#E5E7EB] text-xs focus:border-[#D4A843]" />
+          </div>
+        </div>
+        {/* Add New form */}
+        {showAddVoice && (
+          <div className="bg-[#111827] rounded-lg p-4 border border-[#2A7B88]/20 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className="text-xs text-[#9CA3AF]">Name</label>
+                <input type="text" value={newVoiceName} onChange={(e) => setNewVoiceName(e.target.value)} placeholder="e.g. Stan"
+                  className="w-full mt-1 bg-[#0D1117] border border-[#2A7B88]/30 rounded px-2.5 py-1.5 text-[#E5E7EB] text-sm focus:border-[#D4A843]" /></div>
+              <div><label className="text-xs text-[#9CA3AF]">Fish Audio ID</label>
+                <input type="text" value={newVoiceId} onChange={(e) => setNewVoiceId(e.target.value)} placeholder="Paste ID from Fish Audio"
+                  className="w-full mt-1 bg-[#0D1117] border border-[#2A7B88]/30 rounded px-2.5 py-1.5 text-[#E5E7EB] text-sm focus:border-[#D4A843]" /></div>
+            </div>
+            <div><label className="text-xs text-[#9CA3AF]">Description (optional)</label>
+              <input type="text" value={newVoiceDesc} onChange={(e) => setNewVoiceDesc(e.target.value)} placeholder="e.g. Cloned from Stan's recordings"
+                className="w-full mt-1 bg-[#0D1117] border border-[#2A7B88]/30 rounded px-2.5 py-1.5 text-[#E5E7EB] text-sm focus:border-[#D4A843]" /></div>
+            <div className="flex gap-2">
+              <button onClick={handleSaveVoiceModel} disabled={!newVoiceName.trim() || !newVoiceId.trim()}
+                className="px-4 py-1.5 rounded text-sm font-semibold bg-[#D4A843] text-[#111827] hover:bg-[#D4A843]/90 disabled:opacity-40">Save</button>
+              <button onClick={() => { setShowAddVoice(false); setNewVoiceName(''); setNewVoiceId(''); setNewVoiceDesc('') }}
+                className="px-4 py-1.5 rounded text-sm text-[#9CA3AF] border border-[#374151] hover:border-[#2A7B88]">Cancel</button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* Script + Emotion Tags */}
+      <section className="bg-[#1B2A4A]/60 border border-[#2A7B88]/20 rounded-xl p-6 space-y-4">
+        <h2 className="text-sm font-semibold text-[#9CA3AF] uppercase tracking-wider">Script</h2>
+        <textarea id="voice-script" value={script} onChange={(e) => setScript(e.target.value)} rows={6}
+          placeholder="[excited] I made twenty three thousand dollars last month. [casual] I work a normal job. [confident] My properties make more than my job."
+          className="w-full bg-[#111827] border border-[#2A7B88]/30 rounded-xl px-4 py-3 text-[#E5E7EB] text-sm resize-none focus:border-[#2A7B88] leading-relaxed" />
+        {script && <p className="text-xs text-[#9CA3AF]/60">{script.replace(/\[.*?\]\s*/g, '').split(/\s+/).filter(Boolean).length} words · ~{Math.round(script.replace(/\[.*?\]\s*/g, '').split(/\s+/).filter(Boolean).length / 2.5)}s</p>}
+        <div>
+          <label className="text-xs text-[#9CA3AF] mb-2 block">Click to insert at cursor:</label>
+          <div className="flex flex-wrap gap-1.5">
+            {['excited', 'serious', 'warm', 'whisper', 'laugh', 'confident', 'casual', 'sigh', 'thoughtful'].map(tag => (
+              <button key={tag} onClick={() => insertEmotionTag(tag)}
+                className="px-2.5 py-1 rounded-lg text-xs font-medium border border-[#D4A843]/30 text-[#D4A843]/80 hover:bg-[#D4A843]/10 hover:text-[#D4A843] transition-all">
+                [{tag}]
+              </button>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Voice Settings */}
+      <section className="bg-[#1B2A4A]/60 border border-[#2A7B88]/20 rounded-xl p-6 space-y-4">
+        <h2 className="text-sm font-semibold text-[#9CA3AF] uppercase tracking-wider">Voice Settings</h2>
+        <div className="grid grid-cols-2 gap-6">
+          <SliderControl label="Temperature" min={0} max={1} step={0.05} value={voiceTemp} onChange={setVoiceTemp} />
+          <SliderControl label="Speed" min={0.5} max={2.0} step={0.05} value={voiceSpeed} onChange={setVoiceSpeed} suffix="x" />
+        </div>
+        <div className="grid grid-cols-3 gap-4">
+          <Dropdown label="Format" options={['mp3', 'wav']} value={ttsFormat} onChange={setTtsFormat} />
+          <Dropdown label="Sample Rate" options={['22050', '44100', '48000']} value={String(ttsSampleRate)} onChange={(v) => setTtsSampleRate(Number(v))} />
+          <Dropdown label="Bitrate" options={['64', '128', '192', '320']} value={String(ttsBitrate)} onChange={(v) => setTtsBitrate(Number(v))} />
+        </div>
+      </section>
+
+      {/* Generate + Result */}
+      <section className="bg-[#1B2A4A]/60 border border-[#2A7B88]/20 rounded-xl p-6 space-y-4">
+        <button onClick={handleGenerateTts} disabled={!script.trim() || isGeneratingTts || (!selectedVoiceModel && !manualVoiceId)}
+          className={`w-full flex items-center justify-center gap-2 px-8 py-3 rounded-xl font-bold text-sm transition-all ${script.trim() && !isGeneratingTts && (selectedVoiceModel || manualVoiceId) ? 'bg-gradient-to-r from-[#D4A843] to-[#D4A843]/80 text-[#111827] hover:shadow-lg hover:shadow-[#D4A843]/25' : 'bg-[#1B2A4A] text-[#9CA3AF]/40 cursor-not-allowed'}`}>
+          {isGeneratingTts ? <><Loader2 className="w-4 h-4 animate-spin" />Generating...</> : <><Music className="w-4 h-4" />Generate Audio</>}
+        </button>
+
+        {ttsAudio && (
+          <div className="space-y-3">
+            <audio controls src={ttsAudio} className="w-full" />
+            <div className="flex gap-3 justify-center">
+              <a href={ttsAudio} download={`bnb-voice-${Date.now()}.mp3`}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold bg-[#D4A843] text-[#111827] hover:bg-[#D4A843]/90">
+                <Download className="w-4 h-4" />Download MP3
+              </a>
+              <button onClick={handleGenerateTts}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold bg-[#111827] text-[#9CA3AF] border border-[#2A7B88]/30 hover:border-[#2A7B88]">
+                <RotateCcw className="w-4 h-4" />Regenerate
+              </button>
+              <button onClick={() => { setSelectedPath('custom') }}
+                className="flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold bg-[#111827] text-[#2A7B88] border border-[#2A7B88]/30 hover:border-[#2A7B88] hover:text-[#D4A843]">
+                Copy to Custom Path
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+    </div>
+  )
+
   // ── Character Creator/Editor Modal ──────────────────────────────────────────
 
   const renderFaceDropZone = (slot: string, label: string, currentUrl: string | null) => {
@@ -960,8 +1147,11 @@ function App() {
         {/* Character Library (Custom path, step 1) */}
         {selectedPath === 'custom' && !claudeParams && !videoUrl && renderCharacterLibrary()}
 
-        {/* Brain Dump */}
-        {selectedPath && !claudeParams && !videoUrl && (selectedPath === 'seedance' || customCharacterSelected) && (
+        {/* Voice Only path (replaces brain dump + parameters) */}
+        {selectedPath === 'voice' && renderVoicePath()}
+
+        {/* Brain Dump (seedance + custom only, not voice) */}
+        {selectedPath && selectedPath !== 'voice' && !claudeParams && !videoUrl && (selectedPath === 'seedance' || customCharacterSelected) && (
           <section className="bg-[#1B2A4A]/60 border border-[#2A7B88]/20 rounded-xl p-6">
             <h2 className="text-sm font-semibold text-[#9CA3AF] uppercase tracking-wider mb-4">
               Brain Dump{selectedPath === 'custom' && selectedPack ? ` \u2014 ${selectedPack.name}` : ''}
