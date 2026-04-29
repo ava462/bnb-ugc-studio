@@ -166,24 +166,24 @@ async function generateCustom(params: any): Promise<{ assetId: string; pollType:
     lockPrompt = params.lockPrompt || params.character?.description || 'The same person shown in the reference image — maintain exact face, features, and build throughout the entire video.';
   }
 
-  // Step 2: Upload face references to Arcads (max 3)
-  const referenceImages: string[] = [];
-  for (const url of faceUrls.slice(0, 3)) {
-    const filePath = await arcadsUploadUrl(url);
-    referenceImages.push(filePath);
-  }
-
-  // Step 3: Optionally generate Fish Audio voice style reference
-  let referenceAudios: string[] | undefined;
+  // Step 2: Upload face + generate voice IN PARALLEL (saves ~8s)
+  // Only upload 1 face reference (front-facing) — more refs = slower Seedance queue
   const vid = voiceId || params.voiceId || FISH_AUDIO_VOICE_ID;
-  if (vid && dialogue.length > 20) {
-    try {
-      const audioBuffer = await generateFishAudio(dialogue, vid);
-      const audioPath = await arcadsUploadBuffer(audioBuffer, 'audio/mpeg');
-      referenceAudios = [audioPath];
-    } catch {
-      // Fish Audio failed — continue without voice reference, Seedance will use its own voice
-    }
+  const faceUrl = faceUrls[0] || JORDAN_FACE_URL;
+
+  const [faceResult, audioResult] = await Promise.allSettled([
+    arcadsUploadUrl(faceUrl),
+    vid && dialogue.length > 20
+      ? generateFishAudio(dialogue, vid).then(buf => arcadsUploadBuffer(buf, 'audio/mpeg'))
+      : Promise.resolve(null),
+  ]);
+
+  const referenceImages: string[] = [];
+  if (faceResult.status === 'fulfilled') referenceImages.push(faceResult.value);
+
+  let referenceAudios: string[] | undefined;
+  if (audioResult.status === 'fulfilled' && audioResult.value) {
+    referenceAudios = [audioResult.value];
   }
 
   // Step 4: Build prompt with dialogue as script beats
