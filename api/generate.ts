@@ -63,8 +63,11 @@ async function generateFishAudio(script: string, voiceId?: string): Promise<Buff
   return Buffer.from(await res.arrayBuffer());
 }
 
+const HUMAN_REALISM = 'NATURAL HUMAN BEHAVIOR: The person blinks at a normal relaxed rate, occasionally glances away then back. Subtle micro-movements only: a slight head tilt, a small posture shift. Less is more — calm, natural person talking, not an animated performance.';
+
 function compose9LayerPrompt(params: any): string {
   const script = params.script?.dialogue || '';
+  const scene = params.scene || {};
   const char = params.character || {};
   const setting = params.setting || {};
   const camera = params.camera || {};
@@ -72,36 +75,47 @@ function compose9LayerPrompt(params: any): string {
   const realism = params.realism || {};
   const api = params.apiParams || {};
 
-  // Mandatory human realism block — applied to ALL prompts
-  const humanRealism = 'NATURAL HUMAN BEHAVIOR: The person behaves like a real human — they blink at a normal relaxed rate (not exaggerated or forced), occasionally glance away from camera for a split second then return naturally. Subtle, understated micro-movements only: a slight head tilt here, a small shift in posture there. Less is more — do NOT overdo expressions or gestures. The goal is a calm, natural person talking, not an animated performance.';
+  // Scene/context layer — what's HAPPENING visually (separate from dialogue)
+  const sceneAction = scene.action ? `The person ${scene.action}.` : '';
+  const sceneContext = scene.context ? `Visual context: ${scene.context}.` : '';
 
   return [
-    // Layer 1: Format header
-    `${api.duration || 15} seconds UGC style honest review video, filmed on ${camera.device || 'smartphone'}, ${lighting.source || 'natural window lighting'}, ${camera.angle || 'casual handheld selfie angle'}.`,
+    // Layer 1: Format
+    `${api.duration || 15} seconds UGC style video, filmed on ${camera.device || 'smartphone'}, ${lighting.source || 'natural window lighting'}, ${camera.angle || 'casual handheld selfie angle'}.`,
     // Layer 2: Person
     `A ${char.age || 'person in their mid-twenties'} ${char.gender || ''} with ${char.hair || 'natural hair'}, ${char.skinTone || 'natural skin'} with ${realism.skinCues || 'visible pores, slight unevenness in skin tone, faint undereye shadows'}, wearing ${char.wardrobe || 'casual clothes'}.`,
     // Layer 3: Setting
     `${setting.location || 'In a casual setting'}${setting.props ? ', ' + setting.props : ''}. ${setting.timeOfDay ? setting.timeOfDay + ' light.' : ''}`,
-    // Human realism block
-    humanRealism,
-    // Layer 4+5: Script beats + product intro
-    `Speaking directly to camera with genuine energy. ${script}`,
-    // Layer 6: Tone direction
-    'Energy is authentic and slightly incredulous — like telling a mate something unbelievable that actually happened. Pacing is relaxed, natural pauses between sentences.',
-    // Layer 7: Edit style
+    // Layer 4: Scene/action (what they're DOING)
+    sceneAction,
+    sceneContext,
+    // Human realism
+    HUMAN_REALISM,
+    // Layer 5: Dialogue (what they're SAYING)
+    script ? `Speaking directly to camera: "${script}"` : '',
+    // Layer 6-9: Tone, edit, flaws, vibe
+    'Energy is authentic. Relaxed pace with natural pauses.',
     'Jump cuts between beats with slight angle shifts.',
-    // Layer 8: Technical flaws
-    `${realism.cameraFlaws || 'Slight motion blur on hand gestures, minor lens distortion, phone mic audio quality with faint ambient noise, slightly overexposed highlights.'}`,
-    // Layer 9: Vibe statement + motion cues
-    `${(realism.motionCues || ['breaks eye contact briefly', 'head tilt', 'shifts weight', 'natural hand gesture']).join(', ')}. Raw, relatable, real — not a polished ad. No subtitles, no captions, no text overlays.`,
-  ].join(' ');
+    `${realism.cameraFlaws || 'Slight motion blur, phone mic audio quality, slightly overexposed highlights.'}`,
+    `${(realism.motionCues || ['breaks eye contact briefly', 'head tilt', 'shifts weight']).join(', ')}. Raw, relatable, real — not a polished ad. No subtitles, no captions, no text overlays.`,
+  ].filter(Boolean).join(' ');
 }
 
-// ── Path 1: UGC (Seedance, AI influencer, no voice clone) ──
+// ── Path 1: UGC (Seedance, with optional reference images) ──
 
 async function generateUGC(params: any): Promise<{ assetId: string; pollType: 'arcads_asset' }> {
   const prompt = compose9LayerPrompt(params);
   const api = params.apiParams || {};
+
+  // Upload reference images if provided (from frontend)
+  const referenceImages: string[] = [];
+  const refUrls: string[] = params.referenceImageUrls || [];
+  if (params.referenceImageUrl) refUrls.push(params.referenceImageUrl);
+
+  for (const url of refUrls.slice(0, 3)) {
+    const path = await arcadsUploadUrl(url);
+    referenceImages.push(path);
+  }
 
   const genRes = await fetch('https://external-api.arcads.ai/v2/videos/generate', {
     method: 'POST',
@@ -114,6 +128,7 @@ async function generateUGC(params: any): Promise<{ assetId: string; pollType: 'a
       resolution: api.resolution || '720p',
       audioEnabled: true,
       productId: ARCADS_PRODUCT_ID,
+      ...(referenceImages.length ? { referenceImages } : {}),
     }),
   });
 
@@ -201,18 +216,23 @@ async function generateCustom(params: any): Promise<{ assetId: string; pollType:
     scriptBeats = `The person looks at camera and says: "${cleanDialogue}"`;
   }
 
-  const humanRealism = 'NATURAL HUMAN BEHAVIOR: The person blinks at a normal relaxed rate, occasionally glances away then back. Subtle micro-movements only: a slight head tilt, a small posture shift. Less is more — calm, natural person talking, not an animated performance.';
+  // Scene/context layer (separate from dialogue)
+  const scene = params.scene || {};
+  const sceneAction = scene.action ? `The person ${scene.action}.` : '';
+  const sceneContext = scene.context ? `Visual context: ${scene.context}.` : '';
 
   const prompt = [
     `${api.duration || 15} seconds UGC style testimonial video, filmed on smartphone, ${setting.timeOfDay || 'natural'} lighting, casual handheld selfie angle.`,
     `IMPORTANT: The person MUST match the reference image exactly — same face, same features throughout. ${lockPrompt}`,
     `${setting.location ? setting.location + '.' : 'Casual indoor setting.'}`,
-    humanRealism,
+    sceneAction,
+    sceneContext,
+    HUMAN_REALISM,
     scriptBeats,
-    'Energy is authentic — like telling a friend something genuinely exciting. Relaxed pace with natural pauses.',
+    'Energy is authentic. Relaxed pace with natural pauses.',
     'Jump cuts between beats. Slight motion blur, phone mic audio, subtle camera jitter, slightly off-center framing.',
     'Raw, relatable, real — not a polished ad. No subtitles, no captions, no text overlays.',
-  ].join(' ');
+  ].filter(Boolean).join(' ');
 
   // Step 5: Send to Seedance
   const genBody: Record<string, unknown> = {

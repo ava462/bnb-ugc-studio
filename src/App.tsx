@@ -85,8 +85,14 @@ function App() {
   const [error, setError] = useState('')
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
 
-  // Seedance params
+  // Shared params
   const [script, setScript] = useState('')
+  const [sceneAction, setSceneAction] = useState('')
+  const [sceneContext, setSceneContext] = useState('')
+  const [refImageUrl, setRefImageUrl] = useState<string | null>(null)
+  const [isUploadingRef, setIsUploadingRef] = useState(false)
+
+  // Seedance params
   const [age, setAge] = useState(28)
   const [gender, setGender] = useState<'female' | 'male'>('female')
   const [hair, setHair] = useState('')
@@ -429,6 +435,9 @@ function App() {
         if (data.voice?.temperature !== undefined) setVoiceTemp(data.voice.temperature)
         if (data.voice?.speed !== undefined) setVoiceSpeed(data.voice.speed)
       }
+      // Scene (both paths)
+      if (data.scene?.action) setSceneAction(data.scene.action)
+      if (data.scene?.context) setSceneContext(data.scene.context)
     } catch (err: any) {
       setError(err.message || 'Failed to formulate parameters')
     } finally {
@@ -439,9 +448,13 @@ function App() {
   // ── Build the nested params the API expects ────────────────────────────────
 
   const buildApiParams = useCallback((): Record<string, any> => {
+    // Scene (shared across both paths)
+    const sceneData = (sceneAction || sceneContext) ? { action: sceneAction, context: sceneContext } : undefined
+
     if (selectedPath === 'seedance') {
       return {
         script: { dialogue: script },
+        scene: sceneData,
         character: { age: `${age}`, gender, hair, skinTone: skin, wardrobe },
         setting: { location: setting, timeOfDay: lighting.includes('Golden') ? 'golden hour' : 'day' },
         camera: { angle: camera.toLowerCase().includes('handheld') ? 'casual handheld selfie angle' : camera, movement: camera, device: 'smartphone' },
@@ -453,17 +466,19 @@ function App() {
         } : {},
         apiParams: { model: 'seedance-2.0', duration, aspectRatio, resolution: '720p', audioEnabled: true },
         influencer: { suggested: influencer === 'Auto-select' ? 'jayden' : influencer },
+        ...(refImageUrl ? { referenceImageUrl: refImageUrl } : {}),
       }
     }
     // custom path
     return {
       packId: selectedPack?.id,
       script: { dialogue: script, dialogueTagged: `[${emotion.toLowerCase()}] ${script}` },
+      scene: sceneData,
       voice: { emotionTags: [emotion.toLowerCase()], temperature: voiceTemp, speed: voiceSpeed },
       setting: { location: 'Casual indoor setting', timeOfDay: 'natural light' },
       apiParams: { duration: 15, aspectRatio: '9:16', resolution: '720p' },
     }
-  }, [selectedPath, script, age, gender, hair, skin, wardrobe, setting, camera, lighting, duration, aspectRatio, influencer, realism, emotion, voiceTemp, voiceSpeed, selectedPack])
+  }, [selectedPath, script, sceneAction, sceneContext, age, gender, hair, skin, wardrobe, setting, camera, lighting, duration, aspectRatio, influencer, realism, emotion, voiceTemp, voiceSpeed, selectedPack, refImageUrl])
 
   // ── Generate video ─────────────────────────────────────────────────────────
 
@@ -542,6 +557,65 @@ function App() {
 
   const creditEstimate = selectedPath === 'seedance' ? `~${Math.round(duration * 48)} credits` : '~$0.06 total'
 
+  // ── Shared: Scene + Reference Photo (used by both paths) ─────────────────
+
+  const handleRefImageUpload = async (file: File) => {
+    setIsUploadingRef(true)
+    try {
+      const reader = new FileReader()
+      const dataUri = await new Promise<string>((resolve, reject) => { reader.onload = () => resolve(reader.result as string); reader.onerror = reject; reader.readAsDataURL(file) })
+      const res = await fetch('/api/references?action=upload', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: dataUri, filename: `ref-${Date.now()}.${file.name.split('.').pop()}` }) })
+      if (!res.ok) throw new Error('Upload failed')
+      const { url } = await res.json()
+      setRefImageUrl(url)
+    } catch (err: any) { setError(err.message) }
+    finally { setIsUploadingRef(false) }
+  }
+
+  const renderSceneAndRefFields = () => (
+    <>
+      {/* Scene / Visual Context */}
+      <div className="border border-[#2A7B88]/15 rounded-xl p-4 space-y-4">
+        <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Scene / Visual Context</h4>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs text-[#9CA3AF]">What is the person doing? (separate from what they say)</label>
+          <input type="text" value={sceneAction} onChange={(e) => setSceneAction(e.target.value)}
+            placeholder="e.g. walks through a modern Airbnb apartment, sits on balcony overlooking city"
+            className="bg-[#111827] border border-[#2A7B88]/30 rounded-lg px-3 py-2 text-[#E5E7EB] text-sm focus:border-[#2A7B88]" />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs text-[#9CA3AF]">Visual context / story (optional)</label>
+          <input type="text" value={sceneContext} onChange={(e) => setSceneContext(e.target.value)}
+            placeholder="e.g. showing off their first Airbnb property, morning routine before day job"
+            className="bg-[#111827] border border-[#2A7B88]/30 rounded-lg px-3 py-2 text-[#E5E7EB] text-sm focus:border-[#2A7B88]" />
+        </div>
+      </div>
+
+      {/* Reference Photo */}
+      <div className="border border-[#2A7B88]/15 rounded-xl p-4 space-y-3">
+        <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Reference Photo (optional)</h4>
+        <p className="text-xs text-[#9CA3AF]/60">Upload a photo for Seedance to use as visual reference — face, style, or setting.</p>
+        {refImageUrl ? (
+          <div className="flex items-center gap-3">
+            <img src={refImageUrl} alt="Reference" className="w-16 h-16 rounded-lg object-cover border border-[#2A7B88]/30" />
+            <span className="text-xs text-[#10B981]">Uploaded</span>
+            <button onClick={() => setRefImageUrl(null)} className="text-xs text-red-400/60 hover:text-red-400 ml-auto">Remove</button>
+          </div>
+        ) : (
+          <div onClick={() => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = () => { if (i.files?.[0]) handleRefImageUpload(i.files[0]) }; i.click() }}
+            className="border-2 border-dashed border-[#2A7B88]/30 hover:border-[#D4A843] rounded-xl p-4 text-center cursor-pointer transition-all">
+            {isUploadingRef ? (
+              <div className="flex items-center justify-center gap-2 text-[#D4A843]"><Loader2 className="w-4 h-4 animate-spin" />Uploading...</div>
+            ) : (
+              <><UploadIcon className="w-5 h-5 text-[#9CA3AF]/60 mx-auto mb-1" /><p className="text-xs text-[#9CA3AF]">Drop or click to upload</p></>
+            )}
+          </div>
+        )}
+      </div>
+    </>
+  )
+
   // ── Render: Seedance parameters ────────────────────────────────────────────
 
   const renderSeedanceParams = () => (
@@ -612,6 +686,8 @@ function App() {
           </button>
         </div>
       </div>
+
+      {renderSceneAndRefFields()}
     </div>
   )
 
@@ -660,6 +736,8 @@ function App() {
           </div>
         </div>
       )}
+
+      {renderSceneAndRefFields()}
     </div>
   )
 

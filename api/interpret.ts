@@ -6,6 +6,10 @@ const SYSTEM_PROMPT = `You are a UGC ad production assistant for BNB Success, an
 
 Given a brain dump creative brief and a selected production path, extract and formulate EVERY parameter needed.
 
+IMPORTANT: Separate the SCRIPT (what the person SAYS — the spoken dialogue) from the SCENE (what HAPPENS visually — actions, movement, setting, context). These are different things:
+- SCRIPT = the words spoken to camera. Goes into dialogue quotes in the prompt.
+- SCENE = the visual action/context. Goes into the scene description. Example: "walks through a modern Airbnb apartment", "sits on balcony overlooking the city", "gestures at laptop showing bookings dashboard"
+
 Return ONLY valid JSON. No markdown, no preamble, no code blocks.
 
 Brand voice: Conversational Australian English. First-person. Approachable, results-focused, not hype-y. Use contractions.
@@ -16,7 +20,8 @@ Words to avoid: "revolutionary", "game-changing", "unlock your potential", "pass
 For path "seedance", return:
 {
   "path": "seedance",
-  "script": { "dialogue": "...", "hookType": "result_first|curiosity|skeptic|challenge|storytime", "angle": "...", "ctaText": "...", "wordCount": N, "estDurationSec": N },
+  "script": { "dialogue": "the exact words the person says to camera", "hookType": "result_first|curiosity|skeptic|challenge|storytime", "angle": "...", "ctaText": "...", "wordCount": N, "estDurationSec": N },
+  "scene": { "action": "what the person is physically doing — e.g. walking through apartment, sitting on balcony, gesturing at phone", "context": "the broader visual story — e.g. showing off their Airbnb property, morning routine before heading to their day job" },
   "character": { "age": "mid-twenties", "gender": "male|female", "hair": "...", "skinTone": "...", "wardrobe": "...", "bodyType": "..." },
   "setting": { "location": "...", "timeOfDay": "golden hour|morning|evening", "props": "..." },
   "camera": { "angle": "selfie below eye level|selfie eye level|propped phone", "movement": "handheld micro-shake", "device": "smartphone" },
@@ -27,19 +32,13 @@ For path "seedance", return:
   "influencer": { "suggested": "jayden|mila|kai|priya|sofia|...", "reason": "..." }
 }
 
-For path "arcads", return:
+For path "custom" or "fal", return:
 {
-  "path": "arcads",
-  "script": { "dialogue": "...", "dialogueTagged": "[excited] ... [casual] ... [confident] ...", "hookType": "...", "angle": "...", "ctaText": "...", "wordCount": N },
-  "voice": { "emotionTags": ["excited","casual","confident"], "temperature": 0.7, "speed": 1.0 }
-}
-
-For path "fal", return:
-{
-  "path": "fal",
-  "script": { "dialogue": "...", "dialogueTagged": "[excited] ... [casual] ... [confident] ...", "hookType": "...", "angle": "...", "ctaText": "...", "wordCount": N },
+  "path": "custom",
+  "script": { "dialogue": "the exact words the person says to camera", "dialogueTagged": "[excited] ... [casual] ... [confident] ...", "hookType": "...", "angle": "...", "ctaText": "...", "wordCount": N },
+  "scene": { "action": "what the person is physically doing", "context": "the broader visual story" },
   "voice": { "emotionTags": ["excited","casual","confident"], "temperature": 0.7, "speed": 1.0 },
-  "face": { "description": "Describe the ideal face for this ad" }
+  "setting": { "location": "...", "timeOfDay": "...", "props": "..." }
 }`;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -72,7 +71,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const data = await response.json();
     const text = data.content?.[0]?.text || '';
 
-    // Parse JSON from Claude's response
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return res.status(500).json({ error: 'Failed to parse parameters', raw: text });
 
