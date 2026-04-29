@@ -2,7 +2,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import './App.css'
 import {
   Drama, Target, Sparkles, Download, RotateCcw,
-  ChevronDown, Upload, X, Loader2, Play, Pause, Volume2, VolumeX, AlertCircle, Plus, Music
+  ChevronDown, Upload as UploadIcon, X, Loader2, Play, Pause, Volume2, VolumeX, AlertCircle, Plus, Music,
+  Star, Mic, Copy, Trash2, User, Camera, Image as ImageIcon
 } from 'lucide-react'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -17,12 +18,9 @@ interface ReferencePack {
   age: string | null; gender: string | null; ethnicity: string | null; hair: string | null;
   skin_tone: string | null; distinguishing: string | null;
   is_default: boolean; times_used: number;
-  // Computed in UI
-  faces?: { url: string; filename?: string }[];
-  speaker?: string;
 }
 
-type VoiceOption = 'custom' | 'default' | 'none'
+type VoiceOption = 'clone' | 'default' | 'none'
 
 // ── Path definitions ───────────────────────────────────────────────────────────
 
@@ -106,19 +104,17 @@ function App() {
   const [emotion, setEmotion] = useState('Confident')
   const [voiceTemp, setVoiceTemp] = useState(0.7)
   const [voiceSpeed, setVoiceSpeed] = useState(1.0)
-  // (upload state moved to character modal)
 
   // Character library state
   const [refPacks, setRefPacks] = useState<ReferencePack[]>([])
   const [selectedPack, setSelectedPack] = useState<ReferencePack | null>(null)
   const [isLoadingRefs, setIsLoadingRefs] = useState(false)
-  const [selectedFaceUrl, setSelectedFaceUrl] = useState<string | null>(null)
   const [voicePreviewAudio, setVoicePreviewAudio] = useState<string | null>(null)
   const [isPreviewingVoice, setIsPreviewingVoice] = useState(false)
 
   // Character Creator/Editor modal state
   const [showCharacterModal, setShowCharacterModal] = useState(false)
-  const [editingPack, setEditingPack] = useState<ReferencePack | null>(null) // null = creating new
+  const [editingPack, setEditingPack] = useState<ReferencePack | null>(null)
   const [modalName, setModalName] = useState('')
   const [modalAge, setModalAge] = useState('')
   const [modalGender, setModalGender] = useState('male')
@@ -136,9 +132,9 @@ function App() {
   const [modalFaceInfluence, setModalFaceInfluence] = useState(0.90)
   const [modalVoiceInfluence, setModalVoiceInfluence] = useState(0.80)
   const [modalStyleInfluence, setModalStyleInfluence] = useState(0.50)
-  const [isUploadingModal, setIsUploadingModal] = useState<string | null>(null) // which slot is uploading
+  const [isUploadingModal, setIsUploadingModal] = useState<string | null>(null)
   const [isSavingCharacter, setIsSavingCharacter] = useState(false)
-  
+  const [isDraggingSlot, setIsDraggingSlot] = useState<string | null>(null)
 
   // Video player
   const [isPlaying, setIsPlaying] = useState(false)
@@ -146,8 +142,13 @@ function App() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // Suppress unused import warnings - these are used in JSX below
+  const _suppressUnused = { UploadIcon }
+  void _suppressUnused
+
   useEffect(() => {
     setClaudeParams(null); setBrainDump(''); setScript(''); setVideoUrl(null); setError(''); setStatusText(''); setProgress(0); setIsGenerating(false)
+    setSelectedPack(null)
   }, [selectedPath])
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
@@ -160,15 +161,8 @@ function App() {
       const res = await fetch('/api/references?action=list')
       if (!res.ok) throw new Error('Failed to load reference packs')
       const data = await res.json()
-      const rawPacks: ReferencePack[] = Array.isArray(data) ? data : (data.packs || [])
-      // Compute faces array and speaker from pack data
-      const packs = rawPacks.map(p => ({
-        ...p,
-        speaker: p.name.split(' ')[0].toLowerCase(),
-        faces: [p.face_front, p.face_3quarter, p.face_profile, ...(p.face_additional || [])].filter(Boolean).map(url => ({ url: url! })),
-      }))
+      const packs: ReferencePack[] = Array.isArray(data) ? data : (data.packs || [])
       setRefPacks(packs)
-      // Auto-select default pack if nothing is selected
       if (!selectedPack) {
         const defaultPack = packs.find((p) => p.is_default)
         if (defaultPack) setSelectedPack(defaultPack)
@@ -206,14 +200,13 @@ function App() {
 
   // ── Character modal helpers ────────────────────────────────────────────────
 
-  const generateLockPrompt = (name: string, gender: string, age: string, ethnicity: string, hair: string, skinTone: string, distinguishing: string) => {
-    const parts = [name, gender, age, ethnicity, hair ? `${hair} hair` : '', skinTone ? `${skinTone} skin` : '', distinguishing].filter(Boolean)
+  const generateLockPrompt = (name: string, genderVal: string, ageVal: string, ethnicity: string, hairVal: string, skinTone: string, distinguishing: string) => {
+    const parts = [name, genderVal, ageVal, ethnicity, hairVal ? `${hairVal} hair` : '', skinTone ? `${skinTone} skin` : '', distinguishing].filter(Boolean)
     return `Same character as references: ${parts.join(', ')}. One consistent identity.`
   }
 
   const openCharacterModal = (pack?: ReferencePack) => {
     if (pack) {
-      // Edit mode
       setEditingPack(pack)
       setModalName(pack.name || '')
       setModalAge(pack.age || '')
@@ -226,14 +219,13 @@ function App() {
       setModalFace3Quarter(pack.face_3quarter)
       setModalFaceProfile(pack.face_profile)
       setModalFaceAdditional(pack.face_additional || [])
-      setModalVoiceOption(pack.fish_audio_voice_id ? 'custom' : 'default')
+      setModalVoiceOption(pack.fish_audio_voice_id ? 'clone' : 'default')
       setModalVoiceId(pack.fish_audio_voice_id || '')
       setModalLockPrompt(pack.lock_prompt || '')
       setModalFaceInfluence(pack.face_influence ?? 0.90)
       setModalVoiceInfluence(pack.voice_influence ?? 0.80)
       setModalStyleInfluence(pack.style_influence ?? 0.50)
     } else {
-      // Create mode
       setEditingPack(null)
       setModalName(''); setModalAge(''); setModalGender('male'); setModalEthnicity('')
       setModalHair(''); setModalSkinTone(''); setModalDistinguishing('')
@@ -242,6 +234,29 @@ function App() {
       setModalLockPrompt(''); setModalFaceInfluence(0.90); setModalVoiceInfluence(0.80); setModalStyleInfluence(0.50)
     }
     setShowCharacterModal(true)
+  }
+
+  const handleModalUpload = async (file: File, slot: string) => {
+    setIsUploadingModal(slot)
+    try {
+      const reader = new FileReader()
+      const dataUri = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
+      const res = await fetch('/api/references?action=upload', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: dataUri, speaker: modalName || 'character', filename: `${slot}-${Date.now()}.${file.name.split('.').pop()}` }),
+      })
+      if (!res.ok) throw new Error('Upload failed')
+      const { url } = await res.json()
+      if (slot === 'front') setModalFaceFront(url)
+      else if (slot === '3quarter') setModalFace3Quarter(url)
+      else if (slot === 'profile') setModalFaceProfile(url)
+      else if (slot === 'additional') setModalFaceAdditional(prev => [...prev, url])
+    } catch (err: any) { setError(err.message) }
+    finally { setIsUploadingModal(null) }
   }
 
   const handleSaveCharacter = async () => {
@@ -253,7 +268,7 @@ function App() {
         hair: modalHair || null, skin_tone: modalSkinTone || null, distinguishing: modalDistinguishing || null,
         face_front: modalFaceFront, face_3quarter: modalFace3Quarter, face_profile: modalFaceProfile,
         face_additional: modalFaceAdditional,
-        fish_audio_voice_id: modalVoiceOption === 'custom' ? modalVoiceId : null,
+        fish_audio_voice_id: modalVoiceOption === 'clone' ? modalVoiceId : null,
         lock_prompt: modalLockPrompt || generateLockPrompt(modalName, modalGender, modalAge, modalEthnicity, modalHair, modalSkinTone, modalDistinguishing),
         face_influence: modalFaceInfluence, voice_influence: modalVoiceInfluence, style_influence: modalStyleInfluence,
       }
@@ -301,14 +316,13 @@ function App() {
     } catch (err: any) { setError(err.message) }
   }
 
-  // ── Formulate: Brain dump → Claude → parameters ────────────────────────────
+  // ── Formulate: Brain dump -> Claude -> parameters ────────────────────────────
 
   const handleFormulate = async () => {
     if (!selectedPath || !brainDump.trim()) return
     setIsFormulating(true)
     setError('')
     try {
-      // For interpret API, 'custom' maps to 'fal' so Claude generates the right parameter shape
       const interpretPath = selectedPath === 'custom' ? 'fal' : selectedPath
       const res = await fetch('/api/interpret', {
         method: 'POST',
@@ -322,7 +336,6 @@ function App() {
       const data = await res.json()
       setClaudeParams(data)
 
-      // Map Claude's nested response → flat UI state
       if (selectedPath === 'seedance') {
         if (data.script?.dialogue) setScript(data.script.dialogue)
         if (data.character?.age) {
@@ -349,7 +362,6 @@ function App() {
         if (data.apiParams?.aspectRatio) setAspectRatio(data.apiParams.aspectRatio)
         if (data.influencer?.suggested) setInfluencer(data.influencer.suggested)
       } else {
-        // custom path
         if (data.script?.dialogue) setScript(data.script.dialogue)
         else if (data.script?.dialogueTagged) setScript(data.script.dialogueTagged)
         if (data.voice?.emotionTags?.[0]) {
@@ -407,7 +419,6 @@ function App() {
 
     try {
       const params = buildApiParams()
-
       setStatusText('Starting generation...')
       setProgress(10)
 
@@ -423,7 +434,6 @@ function App() {
       }
 
       const genResult = await res.json()
-
       if (genResult.error) throw new Error(genResult.error)
 
       setStatusText('Generating with Seedance 2.0...')
@@ -432,16 +442,13 @@ function App() {
       const assetId = genResult.assetId
       if (!assetId) throw new Error('No assetId returned')
 
-      // Poll for status
       let pollCount = 0
       pollRef.current = setInterval(async () => {
         pollCount++
         try {
           const statusRes = await fetch(`/api/status?assetId=${assetId}`)
-          if (!statusRes.ok) return // keep polling
-
+          if (!statusRes.ok) return
           const statusData = await statusRes.json()
-
           if (statusData.status === 'complete' && statusData.videoUrl) {
             if (pollRef.current) clearInterval(pollRef.current)
             setVideoUrl(statusData.videoUrl)
@@ -450,14 +457,12 @@ function App() {
             setIsGenerating(false)
             return
           }
-
           if (statusData.status === 'failed' || statusData.status === 'error') {
             if (pollRef.current) clearInterval(pollRef.current)
             setError(statusData.error || 'Generation failed')
             setIsGenerating(false)
             return
           }
-
           const newProgress = Math.min(20 + pollCount * 3, 90)
           setProgress(newProgress)
           setStatusText(statusData.statusText || 'Generating with Seedance 2.0...')
@@ -465,7 +470,6 @@ function App() {
           // Keep polling on network errors
         }
       }, 5000)
-
     } catch (err: any) {
       setError(err.message || 'Generation failed')
       setIsGenerating(false)
@@ -553,93 +557,10 @@ function App() {
     </div>
   )
 
-  // ── Render: Custom Character parameters ──────────────────────────────────
+  // ── Render: Custom params (after character selected + formulate) ──
 
   const renderCustomParams = () => (
     <div className="space-y-6">
-
-      {/* Reference Library */}
-      <div className="border border-[#2A7B88]/15 rounded-xl p-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Reference Library</h4>
-          <button onClick={() => openCharacterModal()}
-            className="flex items-center gap-1.5 text-xs text-[#2A7B88] hover:text-[#D4A843] transition-colors">
-            <Plus className="w-3.5 h-3.5" />New Character
-          </button>
-        </div>
-
-        {/* Pack grid */}
-        {isLoadingRefs ? (
-          <div className="flex items-center justify-center py-6 text-[#9CA3AF]">
-            <Loader2 className="w-5 h-5 animate-spin mr-2" />Loading packs...
-          </div>
-        ) : refPacks.length === 0 ? (
-          <div className="text-center py-6 text-sm text-[#9CA3AF]/60">
-            No reference packs found. Create one above or the API will use Jordan by default.
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-            {refPacks.map((pack) => {
-              const isActive = selectedPack?.speaker === pack.speaker
-              const thumb = pack.faces?.[0]?.url
-              return (
-                <button key={pack.speaker} onClick={() => { setSelectedPack(pack); setSelectedFaceUrl(pack.faces?.[0]?.url || null) }}
-                  className={`relative text-left rounded-lg p-3 border transition-all ${isActive ? 'bg-[#1B2A4A] border-[#D4A843]/60 shadow-md shadow-[#D4A843]/10' : 'bg-[#111827] border-[#2A7B88]/20 hover:border-[#2A7B88]/50'}`}>
-                  {thumb ? (
-                    <img src={thumb} alt={pack.speaker} className="w-full h-20 object-cover rounded mb-2" />
-                  ) : (
-                    <div className="w-full h-20 bg-[#0D1117] rounded mb-2 flex items-center justify-center text-[#9CA3AF]/30">
-                      <Target className="w-8 h-8" />
-                    </div>
-                  )}
-                  <p className={`text-sm font-semibold truncate ${isActive ? 'text-[#D4A843]' : 'text-[#E5E7EB]'}`}>{pack.name || pack.speaker}</p>
-                  <p className="text-xs text-[#9CA3AF]/60">{pack.faces?.length || 0} face{pack.faces?.length !== 1 ? 's' : ''}</p>
-                  {isActive && <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-[#D4A843]" />}
-                </button>
-              )
-            })}
-          </div>
-        )}
-
-        {/* Selected pack actions */}
-        {selectedPack && (
-          <div className="flex items-center gap-2 pt-1">
-            <span className="text-xs text-[#9CA3AF] mr-auto">
-              {selectedPack.fish_audio_voice_id ? '🎙️ Voice clone' : '🔇 No voice'} · {(selectedPack.faces?.length || 0)} photos
-            </span>
-            <button onClick={() => openCharacterModal(selectedPack)} className="text-xs text-[#2A7B88] hover:text-[#D4A843]">Edit</button>
-            <button onClick={() => handleDuplicatePack(selectedPack)} className="text-xs text-[#2A7B88] hover:text-[#D4A843]">Duplicate</button>
-            {!selectedPack.is_default && (
-              <button onClick={() => { if (confirm(`Delete ${selectedPack.name}?`)) handleDeletePack(selectedPack) }} className="text-xs text-red-400/60 hover:text-red-400">Delete</button>
-            )}
-          </div>
-        )}
-
-        {/* Selected pack face thumbnails */}
-        {selectedPack && (selectedPack.faces?.length ?? 0) > 0 && (
-          <div className="space-y-2">
-            <label className="text-xs text-[#9CA3AF] font-medium">Select Reference Face</label>
-            <div className="flex gap-2 overflow-x-auto pb-2" style={{ scrollbarWidth: 'thin' }}>
-              {(selectedPack.faces ?? []).map((face: any, idx: number) => {
-                const isSelected = selectedFaceUrl === face.url
-                return (
-                  <button key={idx} onClick={() => setSelectedFaceUrl(face.url)}
-                    className={`shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-all ${isSelected ? 'border-[#D4A843] shadow-md shadow-[#D4A843]/20' : 'border-[#2A7B88]/20 hover:border-[#2A7B88]/50'}`}>
-                    <img src={face.url} alt={face.filename || `Face ${idx + 1}`} className="w-full h-full object-cover" />
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Upload hint */}
-      {selectedPack && !selectedFaceUrl && (
-        <p className="text-xs text-[#9CA3AF]/60">No face selected — Jordan's default will be used. Click Edit to manage photos.</p>
-      )}
-
-      {/* Voice */}
       <div className="border border-[#2A7B88]/15 rounded-xl p-4 space-y-4">
         <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Voice</h4>
         <div className="flex flex-col gap-1.5">
@@ -662,23 +583,9 @@ function App() {
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${script.trim() && !isPreviewingVoice ? 'bg-[#2A7B88]/20 text-[#2A7B88] border border-[#2A7B88]/30 hover:bg-[#2A7B88]/30' : 'bg-[#111827] text-[#9CA3AF]/30 cursor-not-allowed'}`}>
             {isPreviewingVoice ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Generating...</> : <><Music className="w-3.5 h-3.5" />Preview Voice</>}
           </button>
-          {voicePreviewAudio && (
-            <audio controls src={voicePreviewAudio} className="h-8 flex-1" style={{ maxWidth: '280px' }} />
-          )}
+          {voicePreviewAudio && <audio controls src={voicePreviewAudio} className="h-8 flex-1" style={{ maxWidth: '280px' }} />}
         </div>
       </div>
-
-      {/* Influence Weights */}
-      <div className="border border-[#2A7B88]/15 rounded-xl p-4 space-y-4">
-        <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Influence Weights</h4>
-        <div className="grid grid-cols-2 gap-6">
-          <SliderControl label="Face Influence" min={0} max={1} step={0.05} value={selectedPack?.face_influence ?? 0.9} onChange={() => {}} />
-          <SliderControl label="Style Influence" min={0} max={1} step={0.05} value={selectedPack?.style_influence ?? 0.5} onChange={() => {}} />
-        </div>
-        <p className="text-xs text-[#9CA3AF]/50">Face: how strongly the reference face is matched. Style: how much the reference style affects the output.</p>
-      </div>
-
-      {/* Script */}
       <div className="flex flex-col gap-1.5">
         <label className="text-sm text-[#9CA3AF] font-medium">Script</label>
         <textarea value={script} onChange={(e) => setScript(e.target.value)} rows={5}
@@ -698,7 +605,307 @@ function App() {
     </div>
   )
 
+  // ── Character Library Grid ──────────────────────────────────────────────────
+
+  const countFaces = (pack: ReferencePack) => {
+    let count = 0
+    if (pack.face_front) count++
+    if (pack.face_3quarter) count++
+    if (pack.face_profile) count++
+    count += (pack.face_additional || []).length
+    return count
+  }
+
+  const renderCharacterLibrary = () => (
+    <section className="bg-[#1B2A4A]/60 border border-[#2A7B88]/20 rounded-xl p-6 space-y-5">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-[#9CA3AF] uppercase tracking-wider">Character Library</h2>
+      </div>
+      {isLoadingRefs ? (
+        <div className="flex items-center justify-center py-8 text-[#9CA3AF]">
+          <Loader2 className="w-5 h-5 animate-spin mr-2" />Loading characters...
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          {refPacks.map((pack) => {
+            const isActive = selectedPack?.id === pack.id
+            const faceCount = countFaces(pack)
+            return (
+              <button key={pack.id} onClick={() => setSelectedPack(isActive ? null : pack)}
+                className={`relative flex flex-col items-center text-center rounded-xl p-4 border-2 transition-all ${isActive ? 'bg-[#1B2A4A] border-[#D4A843] shadow-lg shadow-[#D4A843]/10' : 'bg-[#1B2A4A] border-[#2A7B88]/20 hover:border-[#2A7B88]/50'}`}>
+                <div className="w-20 h-20 rounded-full overflow-hidden mb-3 border-2 border-[#2A7B88]/20 bg-[#0D1117] flex items-center justify-center shrink-0">
+                  {pack.face_front ? (
+                    <img src={pack.face_front} alt={pack.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <User className="w-8 h-8 text-[#9CA3AF]/30" />
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <p className={`text-sm font-bold truncate ${isActive ? 'text-[#D4A843]' : 'text-[#E5E7EB]'}`}>{pack.name}</p>
+                  {pack.is_default && <Star className="w-3.5 h-3.5 text-[#D4A843] fill-[#D4A843] shrink-0" />}
+                </div>
+                <div className="flex items-center gap-2 text-xs text-[#9CA3AF]/60">
+                  <Mic className={`w-3 h-3 ${pack.fish_audio_voice_id ? 'text-[#10B981]' : 'text-[#9CA3AF]/30'}`} />
+                  <span>{faceCount} photo{faceCount !== 1 ? 's' : ''}</span>
+                </div>
+              </button>
+            )
+          })}
+          <button onClick={() => openCharacterModal()}
+            className="flex flex-col items-center justify-center text-center rounded-xl p-4 border-2 border-dashed border-[#374151] hover:border-[#D4A843] transition-all group min-h-[160px]">
+            <div className="w-20 h-20 rounded-full mb-3 border-2 border-dashed border-[#374151] group-hover:border-[#D4A843] flex items-center justify-center transition-all">
+              <Plus className="w-8 h-8 text-[#374151] group-hover:text-[#D4A843] transition-colors" />
+            </div>
+            <p className="text-sm font-semibold text-[#374151] group-hover:text-[#D4A843] transition-colors">Create New</p>
+          </button>
+        </div>
+      )}
+      {selectedPack && (
+        <div className="mt-4 bg-[#111827] rounded-xl p-4 border border-[#2A7B88]/20 space-y-3">
+          <div className="flex items-center gap-3">
+            <label className="text-xs text-[#9CA3AF] font-medium shrink-0">Face refs:</label>
+            <div className="flex gap-2 overflow-x-auto" style={{ scrollbarWidth: 'thin' }}>
+              {[
+                { url: selectedPack.face_front, label: 'Front' },
+                { url: selectedPack.face_3quarter, label: '3/4' },
+                { url: selectedPack.face_profile, label: 'Profile' },
+              ].filter(f => f.url).map((face, idx) => (
+                <div key={idx} className="shrink-0 text-center">
+                  <div className="w-14 h-14 rounded-lg overflow-hidden border border-[#2A7B88]/20">
+                    <img src={face.url!} alt={face.label} className="w-full h-full object-cover" />
+                  </div>
+                  <p className="text-[10px] text-[#9CA3AF]/50 mt-0.5">{face.label}</p>
+                </div>
+              ))}
+              {!selectedPack.face_front && !selectedPack.face_3quarter && !selectedPack.face_profile && (
+                <p className="text-xs text-[#9CA3AF]/40 italic">No face references uploaded</p>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 text-xs text-[#9CA3AF]">
+            {selectedPack.fish_audio_voice_id ? (
+              <span className="flex items-center gap-1.5"><Mic className="w-3 h-3 text-[#10B981]" />Fish Audio &middot; {selectedPack.fish_audio_voice_id.slice(0, 8)}...</span>
+            ) : (
+              <span className="flex items-center gap-1.5"><Mic className="w-3 h-3 text-[#9CA3AF]/30" />No voice clone</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 pt-1">
+            <button onClick={() => openCharacterModal(selectedPack)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[#2A7B88]/20 text-[#2A7B88] border border-[#2A7B88]/30 hover:bg-[#2A7B88]/30 transition-all">
+              <Camera className="w-3 h-3" />Edit
+            </button>
+            <button onClick={() => handleDuplicatePack(selectedPack)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[#111827] text-[#9CA3AF] border border-[#2A7B88]/20 hover:border-[#2A7B88]/50 transition-all">
+              <Copy className="w-3 h-3" />Duplicate
+            </button>
+            <button onClick={() => handleDeletePack(selectedPack)} disabled={selectedPack.is_default}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${selectedPack.is_default ? 'bg-[#111827] text-[#9CA3AF]/20 cursor-not-allowed' : 'bg-[#111827] text-red-400/70 border border-red-500/20 hover:border-red-500/40 hover:text-red-400'}`}>
+              <Trash2 className="w-3 h-3" />Delete
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+
+  // ── Character Creator/Editor Modal ──────────────────────────────────────────
+
+  const renderFaceDropZone = (slot: string, label: string, currentUrl: string | null) => {
+    const isUploading = isUploadingModal === slot
+    const isDraggingThis = isDraggingSlot === slot
+    return (
+      <div className="flex flex-col items-center gap-1.5">
+        <label className="text-xs text-[#9CA3AF] font-medium">{label}</label>
+        <div
+          onDragOver={(e) => { e.preventDefault(); setIsDraggingSlot(slot) }}
+          onDragLeave={() => setIsDraggingSlot(null)}
+          onDrop={(e) => { e.preventDefault(); setIsDraggingSlot(null); const file = e.dataTransfer.files[0]; if (file?.type.startsWith('image/')) handleModalUpload(file, slot) }}
+          onClick={() => document.getElementById(`modal-upload-${slot}`)?.click()}
+          className={`w-24 h-24 rounded-xl border-2 border-dashed cursor-pointer transition-all flex items-center justify-center overflow-hidden ${isDraggingThis ? 'border-[#D4A843] bg-[#D4A843]/10' : currentUrl ? 'border-[#2A7B88]/30' : 'border-[#374151] hover:border-[#D4A843]'}`}
+        >
+          {isUploading ? (
+            <Loader2 className="w-5 h-5 animate-spin text-[#D4A843]" />
+          ) : currentUrl ? (
+            <img src={currentUrl} alt={label} className="w-full h-full object-cover" />
+          ) : (
+            <ImageIcon className="w-6 h-6 text-[#374151]" />
+          )}
+          <input id={`modal-upload-${slot}`} type="file" accept="image/jpeg,image/jpg,image/png,image/webp"
+            onChange={(e) => { const file = e.target.files?.[0]; if (file) handleModalUpload(file, slot) }} className="hidden" />
+        </div>
+      </div>
+    )
+  }
+
+  const renderCharacterModal = () => {
+    if (!showCharacterModal) return null
+    const autoPrompt = generateLockPrompt(modalName, modalGender, modalAge, modalEthnicity, modalHair, modalSkinTone, modalDistinguishing)
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" onClick={() => setShowCharacterModal(false)}>
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+        <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto bg-[#111827] rounded-2xl border border-[#2A7B88]/20 shadow-2xl"
+          onClick={(e) => e.stopPropagation()} style={{ scrollbarWidth: 'thin' }}>
+          <div className="sticky top-0 z-10 bg-[#111827] border-b border-[#2A7B88]/15 px-6 py-4 flex items-center justify-between rounded-t-2xl">
+            <h3 className="text-lg font-bold text-[#E5E7EB]">{editingPack ? 'Edit Character' : 'Create New Character'}</h3>
+            <button onClick={() => setShowCharacterModal(false)} className="text-[#9CA3AF] hover:text-[#E5E7EB] transition-colors"><X className="w-5 h-5" /></button>
+          </div>
+          <div className="px-6 py-5 space-y-6">
+            {/* Basics */}
+            <div className="space-y-4">
+              <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Basics</h4>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs text-[#9CA3AF] font-medium">Name <span className="text-red-400">*</span></label>
+                <input type="text" value={modalName} onChange={(e) => setModalName(e.target.value)} placeholder="e.g. Jordan, Sarah"
+                  className="w-full bg-[#0D1117] border border-[#2A7B88]/30 rounded-lg px-3 py-2.5 text-[#E5E7EB] text-sm focus:border-[#D4A843] focus:outline-none" />
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs text-[#9CA3AF] font-medium">Age</label>
+                  <input type="text" value={modalAge} onChange={(e) => setModalAge(e.target.value)} placeholder="e.g. early 20s"
+                    className="bg-[#0D1117] border border-[#2A7B88]/30 rounded-lg px-3 py-2 text-[#E5E7EB] text-sm focus:border-[#D4A843] focus:outline-none" />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs text-[#9CA3AF] font-medium">Gender</label>
+                  <div className="relative">
+                    <select value={modalGender} onChange={(e) => setModalGender(e.target.value)}
+                      className="w-full appearance-none bg-[#0D1117] border border-[#2A7B88]/30 rounded-lg px-3 py-2 text-[#E5E7EB] text-sm focus:border-[#D4A843] cursor-pointer focus:outline-none">
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
+                      <option value="other">Other</option>
+                    </select>
+                    <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#9CA3AF] pointer-events-none" />
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs text-[#9CA3AF] font-medium">Ethnicity</label>
+                  <input type="text" value={modalEthnicity} onChange={(e) => setModalEthnicity(e.target.value)} placeholder="e.g. Asian-Australian"
+                    className="bg-[#0D1117] border border-[#2A7B88]/30 rounded-lg px-3 py-2 text-[#E5E7EB] text-sm focus:border-[#D4A843] focus:outline-none" />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs text-[#9CA3AF] font-medium">Hair</label>
+                  <input type="text" value={modalHair} onChange={(e) => setModalHair(e.target.value)} placeholder="e.g. buzz cut"
+                    className="bg-[#0D1117] border border-[#2A7B88]/30 rounded-lg px-3 py-2 text-[#E5E7EB] text-sm focus:border-[#D4A843] focus:outline-none" />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs text-[#9CA3AF] font-medium">Skin Tone</label>
+                  <input type="text" value={modalSkinTone} onChange={(e) => setModalSkinTone(e.target.value)} placeholder="e.g. light tan"
+                    className="bg-[#0D1117] border border-[#2A7B88]/30 rounded-lg px-3 py-2 text-[#E5E7EB] text-sm focus:border-[#D4A843] focus:outline-none" />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs text-[#9CA3AF] font-medium">Distinguishing Features</label>
+                  <input type="text" value={modalDistinguishing} onChange={(e) => setModalDistinguishing(e.target.value)} placeholder="e.g. small earring"
+                    className="bg-[#0D1117] border border-[#2A7B88]/30 rounded-lg px-3 py-2 text-[#E5E7EB] text-sm focus:border-[#D4A843] focus:outline-none" />
+                </div>
+              </div>
+            </div>
+            {/* Face References */}
+            <div className="space-y-4">
+              <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Face References</h4>
+              <div className="flex items-start gap-4">
+                {renderFaceDropZone('front', 'Front-facing', modalFaceFront)}
+                {renderFaceDropZone('3quarter', '3/4 Angle', modalFace3Quarter)}
+                {renderFaceDropZone('profile', 'Profile', modalFaceProfile)}
+              </div>
+              <div className="space-y-2">
+                <label className="text-xs text-[#9CA3AF] font-medium">Additional Angles</label>
+                <div className="flex flex-wrap gap-2">
+                  {modalFaceAdditional.map((url, idx) => (
+                    <div key={idx} className="relative w-16 h-16 rounded-lg overflow-hidden border border-[#2A7B88]/20 group">
+                      <img src={url} alt={`Extra ${idx + 1}`} className="w-full h-full object-cover" />
+                      <button onClick={() => setModalFaceAdditional(prev => prev.filter((_item, i) => i !== idx))}
+                        className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-red-500/80 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </div>
+                  ))}
+                  <div
+                    onDragOver={(e) => { e.preventDefault(); setIsDraggingSlot('additional') }}
+                    onDragLeave={() => setIsDraggingSlot(null)}
+                    onDrop={(e) => { e.preventDefault(); setIsDraggingSlot(null); const file = e.dataTransfer.files[0]; if (file?.type.startsWith('image/')) handleModalUpload(file, 'additional') }}
+                    onClick={() => document.getElementById('modal-upload-additional')?.click()}
+                    className={`w-16 h-16 rounded-lg border-2 border-dashed cursor-pointer flex items-center justify-center transition-all ${isDraggingSlot === 'additional' ? 'border-[#D4A843] bg-[#D4A843]/10' : 'border-[#374151] hover:border-[#D4A843]'}`}>
+                    {isUploadingModal === 'additional' ? <Loader2 className="w-4 h-4 animate-spin text-[#D4A843]" /> : <Plus className="w-4 h-4 text-[#374151]" />}
+                    <input id="modal-upload-additional" type="file" accept="image/jpeg,image/jpg,image/png,image/webp"
+                      onChange={(e) => { const file = e.target.files?.[0]; if (file) handleModalUpload(file, 'additional') }} className="hidden" />
+                  </div>
+                </div>
+              </div>
+            </div>
+            {/* Voice */}
+            <div className="space-y-4">
+              <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Voice</h4>
+              <div className="space-y-3">
+                {([
+                  { value: 'clone' as VoiceOption, label: "Use character's voice clone" },
+                  { value: 'default' as VoiceOption, label: 'Use default BNB voice (Jordan)' },
+                  { value: 'none' as VoiceOption, label: 'No voice clone' },
+                ]).map((opt) => (
+                  <label key={opt.value} className="flex items-start gap-3 cursor-pointer group">
+                    <div className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center transition-all ${modalVoiceOption === opt.value ? 'border-[#D4A843]' : 'border-[#374151] group-hover:border-[#2A7B88]'}`}>
+                      {modalVoiceOption === opt.value && <div className="w-2 h-2 rounded-full bg-[#D4A843]" />}
+                    </div>
+                    <div className="flex-1">
+                      <input type="radio" name="voiceOption" value={opt.value} checked={modalVoiceOption === opt.value}
+                        onChange={() => setModalVoiceOption(opt.value)} className="hidden" />
+                      <span className={`text-sm ${modalVoiceOption === opt.value ? 'text-[#E5E7EB]' : 'text-[#9CA3AF]'}`}>{opt.label}</span>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              {modalVoiceOption === 'clone' && (
+                <div className="flex items-end gap-3 pl-7">
+                  <div className="flex flex-col gap-1 flex-1">
+                    <label className="text-xs text-[#9CA3AF]">Fish Audio Voice ID</label>
+                    <input type="text" value={modalVoiceId} onChange={(e) => setModalVoiceId(e.target.value)} placeholder="e.g. abc123def456"
+                      className="bg-[#0D1117] border border-[#2A7B88]/30 rounded-lg px-3 py-2 text-[#E5E7EB] text-sm font-mono focus:border-[#D4A843] focus:outline-none" />
+                  </div>
+                  <button onClick={() => handleVoicePreview('Hello, this is a voice test for my character.', modalVoiceId)}
+                    disabled={!modalVoiceId.trim() || isPreviewingVoice}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-all ${modalVoiceId.trim() && !isPreviewingVoice ? 'bg-[#2A7B88]/20 text-[#2A7B88] border border-[#2A7B88]/30 hover:bg-[#2A7B88]/30' : 'bg-[#111827] text-[#9CA3AF]/30 cursor-not-allowed'}`}>
+                    {isPreviewingVoice ? 'Testing...' : 'Test'}
+                  </button>
+                </div>
+              )}
+              {voicePreviewAudio && modalVoiceOption === 'clone' && (
+                <div className="pl-7"><audio controls src={voicePreviewAudio} className="h-8 w-full max-w-sm" /></div>
+              )}
+            </div>
+            {/* Identity Lock Prompt */}
+            <div className="space-y-3">
+              <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Identity Lock Prompt</h4>
+              <textarea value={modalLockPrompt || autoPrompt} onChange={(e) => setModalLockPrompt(e.target.value)} rows={3}
+                className="w-full bg-[#0D1117] border border-[#2A7B88]/30 rounded-lg px-3 py-2.5 text-[#E5E7EB] text-sm resize-none focus:border-[#D4A843] focus:outline-none leading-relaxed" />
+              <p className="text-xs text-[#9CA3AF]/50">Auto-generated from basics. Edit to fine-tune character consistency.</p>
+            </div>
+            {/* Influence Sliders */}
+            <div className="space-y-4">
+              <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Influence Sliders</h4>
+              <div className="space-y-4">
+                <SliderControl label="Face Influence" min={0} max={1} step={0.05} value={modalFaceInfluence} onChange={setModalFaceInfluence} />
+                <SliderControl label="Voice Influence" min={0} max={1} step={0.05} value={modalVoiceInfluence} onChange={setModalVoiceInfluence} />
+                <SliderControl label="Style Influence" min={0} max={1} step={0.05} value={modalStyleInfluence} onChange={setModalStyleInfluence} />
+              </div>
+            </div>
+          </div>
+          {/* Footer */}
+          <div className="sticky bottom-0 bg-[#111827] border-t border-[#2A7B88]/15 px-6 py-4 flex items-center justify-end gap-3 rounded-b-2xl">
+            <button onClick={() => setShowCharacterModal(false)}
+              className="px-5 py-2.5 rounded-xl text-sm font-medium text-[#9CA3AF] border border-[#2A7B88]/20 hover:border-[#2A7B88]/50 transition-all">Cancel</button>
+            <button onClick={handleSaveCharacter} disabled={!modalName.trim() || isSavingCharacter}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${modalName.trim() && !isSavingCharacter ? 'bg-[#D4A843] text-[#111827] hover:bg-[#D4A843]/90 shadow-lg shadow-[#D4A843]/20' : 'bg-[#1B2A4A] text-[#9CA3AF]/40 cursor-not-allowed'}`}>
+              {isSavingCharacter ? <><Loader2 className="w-4 h-4 animate-spin" />Saving...</> : (editingPack ? 'Save Changes' : 'Create Character')}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // ── Main Render ────────────────────────────────────────────────────────────
+
+  const customCharacterSelected = selectedPath === 'custom' && selectedPack !== null
 
   return (
     <div className="min-h-screen bg-[#111827]">
@@ -709,7 +916,7 @@ function App() {
               <Sparkles className="w-4 h-4 text-white" />
             </div>
             <h1 className="text-lg font-semibold text-[#E5E7EB]">
-              BNB Success <span className="text-[#9CA3AF] font-normal mx-2">·</span> <span className="text-[#D4A843]">UGC Content Studio</span>
+              BNB Success <span className="text-[#9CA3AF] font-normal mx-2">&middot;</span> <span className="text-[#D4A843]">UGC Content Studio</span>
             </h1>
           </div>
           {selectedPath && <button onClick={() => { setSelectedPath(null); handleReset() }} className="text-sm text-[#9CA3AF] hover:text-[#E5E7EB]">Switch Path</button>}
@@ -717,7 +924,6 @@ function App() {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 py-8 space-y-8">
-
         {/* Path Selector */}
         <section>
           <h2 className="text-sm font-semibold text-[#9CA3AF] uppercase tracking-wider mb-4">Production Path</h2>
@@ -751,10 +957,15 @@ function App() {
           </div>
         )}
 
+        {/* Character Library (Custom path, step 1) */}
+        {selectedPath === 'custom' && !claudeParams && !videoUrl && renderCharacterLibrary()}
+
         {/* Brain Dump */}
-        {selectedPath && !claudeParams && !videoUrl && (
+        {selectedPath && !claudeParams && !videoUrl && (selectedPath === 'seedance' || customCharacterSelected) && (
           <section className="bg-[#1B2A4A]/60 border border-[#2A7B88]/20 rounded-xl p-6">
-            <h2 className="text-sm font-semibold text-[#9CA3AF] uppercase tracking-wider mb-4">Brain Dump</h2>
+            <h2 className="text-sm font-semibold text-[#9CA3AF] uppercase tracking-wider mb-4">
+              Brain Dump{selectedPath === 'custom' && selectedPack ? ` \u2014 ${selectedPack.name}` : ''}
+            </h2>
             <textarea value={brainDump} onChange={(e) => setBrainDump(e.target.value)} rows={6}
               placeholder={BRAIN_DUMP_PLACEHOLDERS[selectedPath]}
               className="w-full bg-[#111827] border border-[#2A7B88]/30 rounded-xl px-4 py-3 text-[#E5E7EB] text-sm resize-none focus:border-[#2A7B88] placeholder:text-[#9CA3AF]/40 leading-relaxed" />
@@ -827,155 +1038,14 @@ function App() {
             </div>
           </section>
         )}
-
       </main>
+
+      {/* Character Creator/Editor Modal */}
+      {renderCharacterModal()}
+
       <footer className="border-t border-[#2A7B88]/10 mt-16">
         <div className="max-w-5xl mx-auto px-6 py-4 text-center"><p className="text-xs text-[#9CA3AF]/40">BNB Success UGC Content Studio</p></div>
       </footer>
-
-      {/* ── Character Creator/Editor Modal ── */}
-      {showCharacterModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setShowCharacterModal(false)}>
-          <div className="bg-[#111827] rounded-2xl border border-[#2A7B88]/20 w-full max-w-2xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="sticky top-0 bg-[#111827] border-b border-[#2A7B88]/20 px-6 py-4 flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-[#E5E7EB]">{editingPack ? 'Edit Character' : 'Create New Character'}</h3>
-              <button onClick={() => setShowCharacterModal(false)} className="text-[#9CA3AF] hover:text-[#E5E7EB]"><X className="w-5 h-5" /></button>
-            </div>
-
-            <div className="p-6 space-y-6">
-              {/* Basics */}
-              <div className="space-y-4">
-                <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Basics</h4>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs text-[#9CA3AF]">Name *</label>
-                  <input type="text" value={modalName} onChange={(e) => setModalName(e.target.value)} placeholder="e.g. Jordan Pham"
-                    className="bg-[#1f2937] border border-[#374151] rounded-lg px-3 py-2 text-[#E5E7EB] text-sm focus:border-[#D4A843]" />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs text-[#9CA3AF]">Age</label>
-                    <input type="text" value={modalAge} onChange={(e) => setModalAge(e.target.value)} placeholder="e.g. early 20s"
-                      className="bg-[#1f2937] border border-[#374151] rounded-lg px-3 py-2 text-[#E5E7EB] text-sm focus:border-[#D4A843]" />
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <label className="text-xs text-[#9CA3AF]">Gender</label>
-                    <select value={modalGender} onChange={(e) => setModalGender(e.target.value)}
-                      className="bg-[#1f2937] border border-[#374151] rounded-lg px-3 py-2 text-[#E5E7EB] text-sm focus:border-[#D4A843]">
-                      <option value="male">Male</option><option value="female">Female</option><option value="other">Other</option>
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  {[['Ethnicity', modalEthnicity, setModalEthnicity, 'e.g. Vietnamese-Australian'],
-                    ['Hair', modalHair, setModalHair, 'e.g. buzz cut, dark brown'],
-                    ['Skin Tone', modalSkinTone, setModalSkinTone, 'e.g. tanned'],
-                    ['Distinguishing Features', modalDistinguishing, setModalDistinguishing, 'e.g. earring, tattoo']
-                  ].map(([label, val, setter, ph]) => (
-                    <div key={label as string} className="flex flex-col gap-1.5">
-                      <label className="text-xs text-[#9CA3AF]">{label as string}</label>
-                      <input type="text" value={val as string} onChange={(e) => (setter as (v: string) => void)(e.target.value)} placeholder={ph as string}
-                        className="bg-[#1f2937] border border-[#374151] rounded-lg px-3 py-2 text-[#E5E7EB] text-sm focus:border-[#D4A843]" />
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Face References */}
-              <div className="space-y-4">
-                <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Face References</h4>
-                <div className="grid grid-cols-3 gap-3">
-                  {[['Front-facing', modalFaceFront, setModalFaceFront, 'front'],
-                    ['3/4 Angle', modalFace3Quarter, setModalFace3Quarter, '3quarter'],
-                    ['Profile', modalFaceProfile, setModalFaceProfile, 'profile']
-                  ].map(([label, url, setter, slot]) => (
-                    <div key={slot as string} className="flex flex-col gap-1.5">
-                      <label className="text-xs text-[#9CA3AF]">{label as string}</label>
-                      {(url as string | null) ? (
-                        <div className="relative w-full aspect-square rounded-lg overflow-hidden border-2 border-[#2A7B88]/30">
-                          <img src={url as string} className="w-full h-full object-cover" />
-                          <button onClick={() => (setter as (v: string | null) => void)(null)}
-                            className="absolute top-1 right-1 bg-red-500/80 hover:bg-red-500 text-white rounded-full p-0.5"><X className="w-3 h-3" /></button>
-                        </div>
-                      ) : (
-                        <div
-                          onClick={() => {
-                            const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/*';
-                            input.onchange = async () => {
-                              const file = input.files?.[0]; if (!file) return;
-                              setIsUploadingModal(slot as string);
-                              try {
-                                const reader = new FileReader();
-                                const dataUri = await new Promise<string>((resolve, reject) => { reader.onload = () => resolve(reader.result as string); reader.onerror = reject; reader.readAsDataURL(file) });
-                                const res = await fetch('/api/references?action=upload', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                  body: JSON.stringify({ data: dataUri, filename: `${modalName || 'char'}-${slot}-${Date.now()}.${file.name.split('.').pop()}` }) });
-                                if (!res.ok) throw new Error('Upload failed');
-                                const { url: uploadedUrl } = await res.json();
-                                (setter as (v: string | null) => void)(uploadedUrl);
-                              } catch { setError('Upload failed') }
-                              finally { setIsUploadingModal(null) }
-                            }; input.click();
-                          }}
-                          className={`w-full aspect-square rounded-lg border-2 border-dashed flex flex-col items-center justify-center cursor-pointer transition-all ${isUploadingModal === slot ? 'border-[#D4A843]' : 'border-[#374151] hover:border-[#D4A843]'}`}>
-                          {isUploadingModal === slot ? <Loader2 className="w-5 h-5 text-[#D4A843] animate-spin" /> : <Upload className="w-5 h-5 text-[#9CA3AF]/60" />}
-                          <span className="text-[10px] text-[#9CA3AF]/40 mt-1">Drop photo</span>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Voice */}
-              <div className="space-y-3">
-                <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Voice Clone</h4>
-                {['custom', 'default', 'none'].map((opt) => (
-                  <label key={opt} className="flex items-start gap-3 cursor-pointer">
-                    <input type="radio" name="voiceOption" checked={modalVoiceOption === opt} onChange={() => setModalVoiceOption(opt as VoiceOption)}
-                      className="mt-1 accent-[#D4A843]" />
-                    <div>
-                      {opt === 'custom' && <><span className="text-sm text-[#E5E7EB]">Custom Fish Audio voice</span>
-                        {modalVoiceOption === 'custom' && (
-                          <input type="text" value={modalVoiceId} onChange={(e) => setModalVoiceId(e.target.value)} placeholder="Voice ID"
-                            className="mt-2 w-full bg-[#1f2937] border border-[#374151] rounded px-2.5 py-1.5 text-[#E5E7EB] text-xs focus:border-[#D4A843]" />
-                        )}</>}
-                      {opt === 'default' && <span className="text-sm text-[#E5E7EB]">Default BNB voice (Jordan's clone)</span>}
-                      {opt === 'none' && <span className="text-sm text-[#E5E7EB]">No voice clone (Seedance built-in)</span>}
-                    </div>
-                  </label>
-                ))}
-              </div>
-
-              {/* Identity Lock */}
-              <div className="space-y-2">
-                <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Identity Lock Prompt</h4>
-                <textarea value={modalLockPrompt} onChange={(e) => setModalLockPrompt(e.target.value)} rows={3}
-                  className="w-full bg-[#1f2937] border border-[#374151] rounded-lg px-3 py-2 text-[#E5E7EB] text-xs focus:border-[#D4A843] resize-none" />
-                <p className="text-[10px] text-[#9CA3AF]/60">Auto-generated from basics. Edit for more specificity.</p>
-              </div>
-
-              {/* Influence Sliders */}
-              <div className="space-y-3">
-                <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Influence Weights</h4>
-                <SliderControl label="Face Influence" min={0} max={1} step={0.05} value={modalFaceInfluence} onChange={setModalFaceInfluence} />
-                <SliderControl label="Voice Influence" min={0} max={1} step={0.05} value={modalVoiceInfluence} onChange={setModalVoiceInfluence} />
-                <SliderControl label="Style Influence" min={0} max={1} step={0.05} value={modalStyleInfluence} onChange={setModalStyleInfluence} />
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div className="sticky bottom-0 bg-[#111827] border-t border-[#2A7B88]/20 px-6 py-4 flex items-center justify-between">
-              <div className="text-xs text-[#9CA3AF]">{!modalFaceFront && '⚠️ Add at least a front-facing photo'}</div>
-              <div className="flex gap-3">
-                <button onClick={() => setShowCharacterModal(false)} className="px-4 py-2 rounded-lg text-sm text-[#9CA3AF] border border-[#374151] hover:border-[#2A7B88]">Cancel</button>
-                <button onClick={handleSaveCharacter} disabled={!modalName.trim() || isSavingCharacter}
-                  className={`px-6 py-2 rounded-lg text-sm font-semibold transition-all ${modalName.trim() && !isSavingCharacter ? 'bg-[#D4A843] text-[#111827] hover:bg-[#D4A843]/90' : 'bg-[#1B2A4A] text-[#9CA3AF]/40 cursor-not-allowed'}`}>
-                  {isSavingCharacter ? <Loader2 className="w-4 h-4 animate-spin" /> : editingPack ? 'Save Changes' : 'Create Character'}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
