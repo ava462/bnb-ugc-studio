@@ -115,49 +115,70 @@ async function generateUGC(params: any): Promise<{ assetId: string; pollType: 'a
   return { assetId: data.id, pollType: 'arcads_asset' };
 }
 
-// ── Path 2: Custom (Seedance + Fish Audio voice + face references) ──
+// ── Path 2: Custom (Seedance + face reference + dialogue in prompt) ──
+//
+// KEY INSIGHT: Seedance 2.0 generates speech FROM THE PROMPT TEXT when
+// audioEnabled=true. referenceAudios is a voice STYLE reference, not lip-sync.
+// The dialogue MUST be in the prompt as script beats for the person to speak it.
+// Fish Audio MP3 is passed as referenceAudios so Seedance matches that voice tone.
 
 async function generateCustom(params: any): Promise<{ assetId: string; pollType: 'arcads_asset' }> {
-  const script = params.script?.dialogueTagged || params.script?.dialogue || '';
+  const dialogue = params.script?.dialogue || '';
   const faceUrls: string[] = params.faceImageUrls || [];
   const singleFace: string | undefined = params.faceImageUrl;
 
-  // Step 1: Generate voice with Fish Audio
-  const audioBuffer = await generateFishAudio(script, params.voiceId);
-
-  // Step 2: Upload voice MP3 to Arcads
+  // Step 1: Generate Fish Audio voice as a VOICE STYLE reference
+  // Seedance will use this to match the voice tone/style, not as the actual audio track
+  const audioBuffer = await generateFishAudio(dialogue, params.voiceId);
   const audioFilePath = await arcadsUploadBuffer(audioBuffer, 'audio/mpeg');
 
-  // Step 3: Upload face reference images to Arcads
+  // Step 2: Upload face reference images to Arcads
   const referenceImages: string[] = [];
-
-  // Collect face URLs — from pack faces or single uploaded face or Jordan default
   const allFaceUrls = faceUrls.length > 0 ? faceUrls : singleFace ? [singleFace] : [JORDAN_FACE_URL];
 
-  for (const url of allFaceUrls.slice(0, 3)) { // Max 3 reference images
+  for (const url of allFaceUrls.slice(0, 3)) {
     const filePath = await arcadsUploadUrl(url);
     referenceImages.push(filePath);
   }
 
-  // Step 4: Compose the 9-layer prompt with character lock
+  // Step 3: Compose the 9-layer UGC prompt WITH DIALOGUE IN SCRIPT BEATS
   const char = params.character || {};
   const setting = params.setting || {};
   const api = params.apiParams || {};
-  const weights = params.influenceWeights || { face: 0.8, style: 0.5 };
 
-  // Character lock: describe the person from the reference to maintain consistency
   const characterLock = char.description || 'The same person shown in the reference image — maintain exact face, features, and build throughout the entire video.';
 
+  // Split dialogue into script beats for natural delivery
+  const sentences = dialogue.replace(/\[.*?\]\s*/g, '').split(/(?<=[.!?])\s+/).filter(Boolean);
+  let scriptBeats = '';
+  if (sentences.length >= 3) {
+    scriptBeats = [
+      `The video opens with the person looking into camera: "${sentences[0]}"`,
+      `Jump cut — slightly different angle, the person gestures with one hand: "${sentences.slice(1, -1).join(' ')}"`,
+      `Final shot — person leans closer to camera with a knowing look: "${sentences[sentences.length - 1]}"`,
+    ].join(' ');
+  } else {
+    scriptBeats = `The person looks directly at camera and says: "${dialogue.replace(/\[.*?\]\s*/g, '')}"`;
+  }
+
   const prompt = [
-    `${api.duration || 15} seconds UGC style testimonial video, filmed on smartphone, natural lighting, casual handheld selfie angle.`,
+    // Layer 1: Format header
+    `${api.duration || 15} seconds UGC style testimonial video, filmed on smartphone, ${setting.timeOfDay || 'natural'} lighting, casual handheld selfie angle.`,
+    // Layer 2: Person (character lock to reference image)
     `IMPORTANT: The person in this video MUST match the reference image exactly — same face, same features, same person throughout. ${characterLock}`,
-    `${setting.location ? setting.location + '.' : 'Casual indoor setting.'} ${setting.timeOfDay ? setting.timeOfDay + ' light.' : ''}`,
-    `Person is speaking directly to camera with genuine energy, natural hand gestures, breaking eye contact occasionally.`,
-    `Slight motion blur, phone mic audio quality, subtle camera jitter, slightly off-center framing.`,
-    `Raw, relatable, real — not a polished ad. No subtitles, no captions, no text overlays.`,
+    // Layer 3: Setting
+    `${setting.location ? setting.location + '.' : 'Casual indoor setting.'}`,
+    // Layer 5: Script beats WITH DIALOGUE
+    scriptBeats,
+    // Layer 6: Tone
+    'Energy is authentic — like telling a friend something genuinely exciting. Relaxed pace with natural pauses.',
+    // Layer 7+8: Edit style + technical flaws
+    'Jump cuts between beats with slight angle shifts. Slight motion blur, phone mic audio quality, subtle camera jitter, slightly off-center framing.',
+    // Layer 9: Vibe
+    'Raw, relatable, real — not a polished ad. No subtitles, no captions, no text overlays.',
   ].join(' ');
 
-  // Step 5: Send to Seedance with referenceImages + referenceAudios
+  // Step 4: Send to Seedance — dialogue is in prompt, Fish Audio is voice style reference
   const genBody: Record<string, unknown> = {
     model: 'seedance-2.0',
     prompt,
