@@ -5,6 +5,8 @@ const ARCADS_PRODUCT_ID = process.env.ARCADS_PRODUCT_ID!;
 const FISH_AUDIO_API_KEY = process.env.FISH_AUDIO_API_KEY!;
 const FISH_AUDIO_VOICE_ID = process.env.FISH_AUDIO_VOICE_ID || '14d07e89acda4214bd319865a7e1a888';
 const JORDAN_FACE_URL = process.env.JORDAN_FACE_URL || 'https://zyiidveeixbbjpswruyn.supabase.co/storage/v1/object/public/ugc-assets/face-references/jordan-pham-hero.jpg';
+const SUPABASE_URL = process.env.SUPABASE_URL!;
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY!;
 
 // ── Helpers ──
 
@@ -70,6 +72,9 @@ function compose9LayerPrompt(params: any): string {
   const realism = params.realism || {};
   const api = params.apiParams || {};
 
+  // Mandatory human realism block — applied to ALL prompts
+  const humanRealism = 'NATURAL HUMAN BEHAVIOR: The person behaves like a real human — they blink at a normal relaxed rate (not exaggerated or forced), occasionally glance away from camera for a split second then return naturally. Subtle, understated micro-movements only: a slight head tilt here, a small shift in posture there. Less is more — do NOT overdo expressions or gestures. The goal is a calm, natural person talking, not an animated performance.';
+
   return [
     // Layer 1: Format header
     `${api.duration || 15} seconds UGC style honest review video, filmed on ${camera.device || 'smartphone'}, ${lighting.source || 'natural window lighting'}, ${camera.angle || 'casual handheld selfie angle'}.`,
@@ -77,6 +82,8 @@ function compose9LayerPrompt(params: any): string {
     `A ${char.age || 'person in their mid-twenties'} ${char.gender || ''} with ${char.hair || 'natural hair'}, ${char.skinTone || 'natural skin'} with ${realism.skinCues || 'visible pores, slight unevenness in skin tone, faint undereye shadows'}, wearing ${char.wardrobe || 'casual clothes'}.`,
     // Layer 3: Setting
     `${setting.location || 'In a casual setting'}${setting.props ? ', ' + setting.props : ''}. ${setting.timeOfDay ? setting.timeOfDay + ' light.' : ''}`,
+    // Human realism block
+    humanRealism,
     // Layer 4+5: Script beats + product intro
     `Speaking directly to camera with genuine energy. ${script}`,
     // Layer 6: Tone direction
@@ -115,70 +122,98 @@ async function generateUGC(params: any): Promise<{ assetId: string; pollType: 'a
   return { assetId: data.id, pollType: 'arcads_asset' };
 }
 
-// ── Path 2: Custom (Seedance + face reference + dialogue in prompt) ──
+// ── Path 2: Custom (Seedance + character pack from reference_packs table) ──
 //
-// KEY INSIGHT: Seedance 2.0 generates speech FROM THE PROMPT TEXT when
-// audioEnabled=true. referenceAudios is a voice STYLE reference, not lip-sync.
-// The dialogue MUST be in the prompt as script beats for the person to speak it.
-// Fish Audio MP3 is passed as referenceAudios so Seedance matches that voice tone.
+// Flow: Fetch pack from Supabase → build prompt with dialogue + lock_prompt →
+// upload face refs to Arcads → optionally generate Fish Audio voice ref →
+// send to Seedance 2.0
+
+async function fetchPack(packId: string): Promise<any> {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/reference_packs?id=eq.${packId}&limit=1`, {
+    headers: { 'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`, 'apikey': SUPABASE_SERVICE_KEY },
+  });
+  if (!r.ok) return null;
+  const rows = await r.json();
+  return rows[0] || null;
+}
 
 async function generateCustom(params: any): Promise<{ assetId: string; pollType: 'arcads_asset' }> {
   const dialogue = params.script?.dialogue || '';
-  const faceUrls: string[] = params.faceImageUrls || [];
-  const singleFace: string | undefined = params.faceImageUrl;
+  const api = params.apiParams || {};
+  const setting = params.setting || {};
 
-  // Step 1: Generate Fish Audio voice as a VOICE STYLE reference
-  // Seedance will use this to match the voice tone/style, not as the actual audio track
-  const audioBuffer = await generateFishAudio(dialogue, params.voiceId);
-  const audioFilePath = await arcadsUploadBuffer(audioBuffer, 'audio/mpeg');
+  // Step 1: Get character pack (from packId or use face URLs directly)
+  let faceUrls: string[] = [];
+  let lockPrompt = '';
+  let voiceId: string | null = null;
 
-  // Step 2: Upload face reference images to Arcads
+  if (params.packId) {
+    const pack = await fetchPack(params.packId);
+    if (pack) {
+      faceUrls = [pack.face_front, pack.face_3quarter, pack.face_profile, ...(pack.face_additional || [])].filter(Boolean);
+      lockPrompt = pack.lock_prompt || '';
+      voiceId = pack.fish_audio_voice_id || null;
+    }
+  }
+
+  // Fallback to params if no pack
+  if (!faceUrls.length) {
+    const urls = params.faceImageUrls || [];
+    const single = params.faceImageUrl;
+    faceUrls = urls.length ? urls : single ? [single] : [JORDAN_FACE_URL];
+  }
+  if (!lockPrompt) {
+    lockPrompt = params.lockPrompt || params.character?.description || 'The same person shown in the reference image — maintain exact face, features, and build throughout the entire video.';
+  }
+
+  // Step 2: Upload face references to Arcads (max 3)
   const referenceImages: string[] = [];
-  const allFaceUrls = faceUrls.length > 0 ? faceUrls : singleFace ? [singleFace] : [JORDAN_FACE_URL];
-
-  for (const url of allFaceUrls.slice(0, 3)) {
+  for (const url of faceUrls.slice(0, 3)) {
     const filePath = await arcadsUploadUrl(url);
     referenceImages.push(filePath);
   }
 
-  // Step 3: Compose the 9-layer UGC prompt WITH DIALOGUE IN SCRIPT BEATS
-  const char = params.character || {};
-  const setting = params.setting || {};
-  const api = params.apiParams || {};
+  // Step 3: Optionally generate Fish Audio voice style reference
+  let referenceAudios: string[] | undefined;
+  const vid = voiceId || params.voiceId || FISH_AUDIO_VOICE_ID;
+  if (vid && dialogue.length > 20) {
+    try {
+      const audioBuffer = await generateFishAudio(dialogue, vid);
+      const audioPath = await arcadsUploadBuffer(audioBuffer, 'audio/mpeg');
+      referenceAudios = [audioPath];
+    } catch {
+      // Fish Audio failed — continue without voice reference, Seedance will use its own voice
+    }
+  }
 
-  const characterLock = char.description || 'The same person shown in the reference image — maintain exact face, features, and build throughout the entire video.';
-
-  // Split dialogue into script beats for natural delivery
-  const sentences = dialogue.replace(/\[.*?\]\s*/g, '').split(/(?<=[.!?])\s+/).filter(Boolean);
-  let scriptBeats = '';
+  // Step 4: Build prompt with dialogue as script beats
+  const cleanDialogue = dialogue.replace(/\[.*?\]\s*/g, '');
+  const sentences = cleanDialogue.split(/(?<=[.!?])\s+/).filter(Boolean);
+  let scriptBeats: string;
   if (sentences.length >= 3) {
     scriptBeats = [
       `The video opens with the person looking into camera: "${sentences[0]}"`,
-      `Jump cut — slightly different angle, the person gestures with one hand: "${sentences.slice(1, -1).join(' ')}"`,
-      `Final shot — person leans closer to camera with a knowing look: "${sentences[sentences.length - 1]}"`,
+      `Jump cut — slightly different angle, the person gestures naturally: "${sentences.slice(1, -1).join(' ')}"`,
+      `Final shot — person leans slightly closer: "${sentences[sentences.length - 1]}"`,
     ].join(' ');
   } else {
-    scriptBeats = `The person looks directly at camera and says: "${dialogue.replace(/\[.*?\]\s*/g, '')}"`;
+    scriptBeats = `The person looks at camera and says: "${cleanDialogue}"`;
   }
 
+  const humanRealism = 'NATURAL HUMAN BEHAVIOR: The person blinks at a normal relaxed rate, occasionally glances away then back. Subtle micro-movements only: a slight head tilt, a small posture shift. Less is more — calm, natural person talking, not an animated performance.';
+
   const prompt = [
-    // Layer 1: Format header
     `${api.duration || 15} seconds UGC style testimonial video, filmed on smartphone, ${setting.timeOfDay || 'natural'} lighting, casual handheld selfie angle.`,
-    // Layer 2: Person (character lock to reference image)
-    `IMPORTANT: The person in this video MUST match the reference image exactly — same face, same features, same person throughout. ${characterLock}`,
-    // Layer 3: Setting
+    `IMPORTANT: The person MUST match the reference image exactly — same face, same features throughout. ${lockPrompt}`,
     `${setting.location ? setting.location + '.' : 'Casual indoor setting.'}`,
-    // Layer 5: Script beats WITH DIALOGUE
+    humanRealism,
     scriptBeats,
-    // Layer 6: Tone
     'Energy is authentic — like telling a friend something genuinely exciting. Relaxed pace with natural pauses.',
-    // Layer 7+8: Edit style + technical flaws
-    'Jump cuts between beats with slight angle shifts. Slight motion blur, phone mic audio quality, subtle camera jitter, slightly off-center framing.',
-    // Layer 9: Vibe
+    'Jump cuts between beats. Slight motion blur, phone mic audio, subtle camera jitter, slightly off-center framing.',
     'Raw, relatable, real — not a polished ad. No subtitles, no captions, no text overlays.',
   ].join(' ');
 
-  // Step 4: Send to Seedance — dialogue is in prompt, Fish Audio is voice style reference
+  // Step 5: Send to Seedance
   const genBody: Record<string, unknown> = {
     model: 'seedance-2.0',
     prompt,
@@ -188,7 +223,7 @@ async function generateCustom(params: any): Promise<{ assetId: string; pollType:
     audioEnabled: true,
     productId: ARCADS_PRODUCT_ID,
     referenceImages,
-    referenceAudios: [audioFilePath],
+    ...(referenceAudios ? { referenceAudios } : {}),
   };
 
   const genRes = await fetch('https://external-api.arcads.ai/v2/videos/generate', {
