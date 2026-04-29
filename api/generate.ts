@@ -168,7 +168,8 @@ async function generateCustom(params: any): Promise<{ assetId: string; pollType:
 
   // Step 2: Upload face + generate voice IN PARALLEL (saves ~8s)
   // Only upload 1 face reference (front-facing) — more refs = slower Seedance queue
-  const vid = voiceId || params.voiceId || FISH_AUDIO_VOICE_ID;
+  // Use the pack's voice ID if configured. Don't auto-fallback to Jordan's voice.
+  const vid = voiceId || params.voiceId || null;
   const faceUrl = faceUrls[0] || JORDAN_FACE_URL;
 
   const [faceResult, audioResult] = await Promise.allSettled([

@@ -20,7 +20,7 @@ interface ReferencePack {
   is_default: boolean; times_used: number;
 }
 
-type VoiceOption = 'clone' | 'default' | 'none'
+type VoiceOption = 'custom' | 'default' | 'none'
 
 // ── Path definitions ───────────────────────────────────────────────────────────
 
@@ -219,7 +219,7 @@ function App() {
       setModalFace3Quarter(pack.face_3quarter)
       setModalFaceProfile(pack.face_profile)
       setModalFaceAdditional(pack.face_additional || [])
-      setModalVoiceOption(pack.fish_audio_voice_id ? 'clone' : 'default')
+      setModalVoiceOption(pack.fish_audio_voice_id ? 'custom' : 'default')
       setModalVoiceId(pack.fish_audio_voice_id || '')
       setModalLockPrompt(pack.lock_prompt || '')
       setModalFaceInfluence(pack.face_influence ?? 0.90)
@@ -268,7 +268,7 @@ function App() {
         hair: modalHair || null, skin_tone: modalSkinTone || null, distinguishing: modalDistinguishing || null,
         face_front: modalFaceFront, face_3quarter: modalFace3Quarter, face_profile: modalFaceProfile,
         face_additional: modalFaceAdditional,
-        fish_audio_voice_id: modalVoiceOption === 'clone' ? modalVoiceId : null,
+        fish_audio_voice_id: modalVoiceOption === 'custom' ? modalVoiceId : null,
         lock_prompt: modalLockPrompt || generateLockPrompt(modalName, modalGender, modalAge, modalEthnicity, modalHair, modalSkinTone, modalDistinguishing),
         face_influence: modalFaceInfluence, voice_influence: modalVoiceInfluence, style_influence: modalStyleInfluence,
       }
@@ -838,7 +838,7 @@ function App() {
               <h4 className="text-sm font-semibold text-[#D4A843] uppercase tracking-wider">Voice</h4>
               <div className="space-y-3">
                 {([
-                  { value: 'clone' as VoiceOption, label: "Use character's voice clone" },
+                  { value: 'custom' as VoiceOption, label: "Use character's voice clone" },
                   { value: 'default' as VoiceOption, label: 'Use default BNB voice (Jordan)' },
                   { value: 'none' as VoiceOption, label: 'No voice clone' },
                 ]).map((opt) => (
@@ -854,7 +854,7 @@ function App() {
                   </label>
                 ))}
               </div>
-              {modalVoiceOption === 'clone' && (
+              {modalVoiceOption === 'custom' && (
                 <div className="flex items-end gap-3 pl-7">
                   <div className="flex flex-col gap-1 flex-1">
                     <label className="text-xs text-[#9CA3AF]">Fish Audio Voice ID</label>
@@ -868,7 +868,7 @@ function App() {
                   </button>
                 </div>
               )}
-              {voicePreviewAudio && modalVoiceOption === 'clone' && (
+              {voicePreviewAudio && modalVoiceOption === 'custom' && (
                 <div className="pl-7"><audio controls src={voicePreviewAudio} className="h-8 w-full max-w-sm" /></div>
               )}
             </div>
