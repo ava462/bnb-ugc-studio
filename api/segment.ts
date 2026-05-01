@@ -21,6 +21,13 @@ BREAKPOINTS — split at:
 - Rhetorical pauses
 - Before "but," "however," "the thing is," "here's what happened"
 
+USER TRANSITION TAGS — if the script contains these inline tags, ALWAYS split at that exact point and use the specified transition type:
+- [CUT] → force a hard cut here (transitionIn: "cut", transitionDuration: 0)
+- [CROSSFADE] → force a crossfade here (transitionIn: "crossfade", transitionDuration: 12)
+- [SLIDE] → force a slide transition (transitionIn: "slide-left", transitionDuration: 8)
+- [FADE] → force a fade-to-black/fade-from-black (transitionIn: "fade-from-black", transitionDuration: 10)
+Strip these tags from the scriptText in each chunk — they're instructions, not dialogue.
+
 STRUCTURE:
 - First chunk: HOOK (attention grab)
 - Middle chunks: Story, context, proof
@@ -117,6 +124,31 @@ ${script}
     const text = data.content[0].text;
     const cleaned = text.replace(/```json|```/g, '').trim();
     const result = JSON.parse(cleaned);
+
+    // Build markedScript: full script with inline cut/transition markers
+    // so the user can see exactly where cuts happen
+    if (result.chunks?.length > 1) {
+      const transitionLabels: Record<string, string> = {
+        'cut': '✂️ CUT',
+        'crossfade': '🔀 CROSSFADE',
+        'slide-left': '➡️ SLIDE',
+        'slide-right': '⬅️ SLIDE',
+        'fade-from-black': '⬛ FADE IN',
+        'fade-to-black': '⬛ FADE OUT',
+      };
+
+      let marked = '';
+      for (let i = 0; i < result.chunks.length; i++) {
+        const chunk = result.chunks[i];
+        if (i > 0) {
+          const label = transitionLabels[chunk.transitionIn] || '✂️ CUT';
+          marked += `\n\n--- ${label} (${chunk.transitionDuration || 0} frames) ---\n\n`;
+        }
+        marked += chunk.scriptText;
+      }
+      result.markedScript = marked;
+    }
+
     return res.json(result);
   } catch (e: any) {
     return res.status(500).json({ error: `Segmentation failed: ${e.message}` });

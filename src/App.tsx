@@ -603,12 +603,16 @@ function App() {
             <button onClick={() => setRefImageUrl(null)} className="text-xs text-red-400/60 hover:text-red-400 ml-auto">Remove</button>
           </div>
         ) : (
-          <div onClick={() => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/*'; i.onchange = () => { if (i.files?.[0]) handleRefImageUpload(i.files[0]) }; i.click() }}
-            className="border-2 border-dashed border-[#2A7B88]/30 hover:border-[#D4A843] rounded-xl p-4 text-center cursor-pointer transition-all">
+          <div
+            onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('border-[#D4A843]', 'bg-[#D4A843]/5') }}
+            onDragLeave={(e) => { e.currentTarget.classList.remove('border-[#D4A843]', 'bg-[#D4A843]/5') }}
+            onDrop={(e) => { e.preventDefault(); e.currentTarget.classList.remove('border-[#D4A843]', 'bg-[#D4A843]/5'); const file = e.dataTransfer.files[0]; if (file?.type.startsWith('image/')) handleRefImageUpload(file) }}
+            onClick={() => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/jpeg,image/jpg,image/png,image/webp,image/heic'; i.onchange = () => { if (i.files?.[0]) handleRefImageUpload(i.files[0]) }; i.click() }}
+            className="border-2 border-dashed border-[#2A7B88]/30 hover:border-[#D4A843] rounded-xl p-6 text-center cursor-pointer transition-all">
             {isUploadingRef ? (
               <div className="flex items-center justify-center gap-2 text-[#D4A843]"><Loader2 className="w-4 h-4 animate-spin" />Uploading...</div>
             ) : (
-              <><UploadIcon className="w-5 h-5 text-[#9CA3AF]/60 mx-auto mb-1" /><p className="text-xs text-[#9CA3AF]">Drop or click to upload</p></>
+              <><UploadIcon className="w-5 h-5 text-[#9CA3AF]/60 mx-auto mb-1" /><p className="text-xs text-[#9CA3AF]">Drag & drop or click to upload</p><p className="text-[10px] text-[#9CA3AF]/40 mt-1">JPG, JPEG, PNG, WebP, HEIC</p></>
             )}
           </div>
         )}
