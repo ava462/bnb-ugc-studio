@@ -92,6 +92,12 @@ function App() {
   const [refImageUrl, setRefImageUrl] = useState<string | null>(null)
   const [isUploadingRef, setIsUploadingRef] = useState(false)
 
+  // Long-form state
+  const [segments, setSegments] = useState<any>(null)
+  const [isSegmenting, setIsSegmenting] = useState(false)
+  const [_markedScript, setMarkedScript] = useState('')
+  void _markedScript // used for future display
+
   // Seedance params
   const [age, setAge] = useState(28)
   const [gender, setGender] = useState<'female' | 'male'>('female')
@@ -480,10 +486,44 @@ function App() {
     }
   }, [selectedPath, script, sceneAction, sceneContext, age, gender, hair, skin, wardrobe, setting, camera, lighting, duration, aspectRatio, influencer, realism, emotion, voiceTemp, voiceSpeed, selectedPack, refImageUrl])
 
-  // ── Generate video ─────────────────────────────────────────────────────────
+  // ── Script duration estimation ─────────────────────────────────────────────
+
+  const cleanScript = script.replace(/\[.*?\]\s*/g, '')
+  const scriptWordCount = cleanScript.split(/\s+/).filter(Boolean).length
+  const estDurationSec = Math.round((scriptWordCount / 150) * 60)
+  const isLongForm = estDurationSec > 15
+
+  // ── Segment long scripts ──────────────────────────────────────────────────
+
+  const handleSegment = async () => {
+    if (!script.trim() || !isLongForm) return
+    setIsSegmenting(true)
+    setError('')
+    try {
+      const res = await fetch('/api/segment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script, path: selectedPath, parameters: buildApiParams() }),
+      })
+      if (!res.ok) throw new Error('Segmentation failed')
+      const data = await res.json()
+      setSegments(data)
+      setMarkedScript(data.markedScript || '')
+    } catch (err: any) { setError(err.message) }
+    finally { setIsSegmenting(false) }
+  }
+
+  // ── Generate video (short-form or long-form) ──────────────────────────────
 
   const handleGenerate = async () => {
     if (!selectedPath || !script.trim()) return
+
+    // Long-form: if >15s and not yet segmented, segment first
+    if (isLongForm && !segments) {
+      await handleSegment()
+      return // Show segments first, user clicks Generate again
+    }
+
     setIsGenerating(true)
     setError('')
     setStatusText('Submitting job...')
@@ -492,6 +532,62 @@ function App() {
 
     try {
       const params = buildApiParams()
+
+      // Long-form: generate chunks sequentially
+      if (isLongForm && segments?.chunks?.length > 1) {
+        const totalChunks = segments.chunks.length
+        const chunkVideoUrls: string[] = []
+
+        for (let i = 0; i < totalChunks; i++) {
+          setStatusText(`🎬 Generating chunk ${i + 1}/${totalChunks}...`)
+          setProgress(10 + Math.round((i / totalChunks) * 70))
+
+          // Build per-chunk params with chunk dialogue
+          const chunk = segments.chunks[i]
+          const chunkParams = {
+            ...params,
+            script: { dialogue: chunk.scriptText },
+            apiParams: { ...params.apiParams, duration: Math.min(chunk.durationSec, 15) },
+          }
+
+          const res = await fetch('/api/generate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: selectedPath, parameters: chunkParams }),
+          })
+          if (!res.ok) throw new Error(`Chunk ${i + 1} generation failed`)
+          const genResult = await res.json()
+          if (genResult.error) throw new Error(genResult.error)
+
+          // Poll until complete
+          const assetId = genResult.assetId
+          setStatusText(`⏳ Chunk ${i + 1}/${totalChunks} processing...`)
+
+          let done = false
+          while (!done) {
+            await new Promise(r => setTimeout(r, 5000))
+            const statusRes = await fetch(`/api/status?assetId=${assetId}`)
+            if (!statusRes.ok) continue
+            const statusData = await statusRes.json()
+            if (statusData.status === 'complete' && statusData.videoUrl) {
+              chunkVideoUrls.push(statusData.videoUrl)
+              done = true
+            } else if (statusData.status === 'failed') {
+              throw new Error(`Chunk ${i + 1} failed: ${statusData.error || 'unknown'}`)
+            }
+          }
+        }
+
+        // For now, play the last chunk (full Remotion assembly requires the render server)
+        // TODO: Send to render server for proper stitching with transitions + captions
+        setVideoUrl(chunkVideoUrls[chunkVideoUrls.length - 1])
+        setStatusText(`✅ ${totalChunks} chunks generated!`)
+        setProgress(100)
+        setIsGenerating(false)
+        return
+      }
+
+      // Short-form: normal single clip flow
       setStatusText('Starting generation...')
       setProgress(10)
 
@@ -1261,6 +1357,59 @@ function App() {
           </section>
         )}
 
+        {/* Long-form indicator + segment preview */}
+        {claudeParams && !videoUrl && isLongForm && script.trim() && (
+          <section className="bg-[#1B2A4A]/60 border border-[#D4A843]/30 rounded-xl p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-bold bg-[#D4A843]/20 text-[#D4A843] px-2.5 py-1 rounded-full">LONG-FORM</span>
+              <span className="text-sm text-[#9CA3AF]">~{estDurationSec}s · {scriptWordCount} words · {segments ? segments.chunks.length : Math.ceil(estDurationSec / 13)} chunks</span>
+            </div>
+
+            {!segments && (
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-[#9CA3AF]/80">Script is longer than 15s. It will be split into chunks and stitched together.</p>
+                <button onClick={handleSegment} disabled={isSegmenting}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-[#2A7B88]/20 text-[#2A7B88] border border-[#2A7B88]/30 hover:bg-[#2A7B88]/30">
+                  {isSegmenting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Segmenting...</> : 'Preview Cuts'}
+                </button>
+              </div>
+            )}
+
+            {segments && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-sm font-semibold text-[#D4A843]">Segment Preview</h4>
+                  <button onClick={() => { setSegments(null); setMarkedScript('') }} className="text-xs text-[#9CA3AF] hover:text-[#D4A843]">Re-segment</button>
+                </div>
+
+                {/* Timeline bar */}
+                <div className="flex gap-0.5 h-2 rounded-full overflow-hidden">
+                  {segments.chunks.map((chunk: any, i: number) => {
+                    const pct = (chunk.durationSec / segments.totalDurationSec) * 100
+                    const colors = ['#2A7B88', '#D4A843', '#10B981', '#8B5CF6', '#F59E0B']
+                    return <div key={i} style={{ width: `${pct}%`, backgroundColor: colors[i % colors.length] }} title={`Chunk ${i + 1}: ${chunk.durationSec}s`} />
+                  })}
+                </div>
+
+                {/* Chunk list */}
+                {segments.chunks.map((chunk: any, i: number) => (
+                  <div key={i} className="bg-[#111827] rounded-lg p-3 border border-[#2A7B88]/15">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="text-[10px] font-bold bg-[#2A7B88]/20 text-[#2A7B88] px-1.5 py-0.5 rounded">CHUNK {i + 1}</span>
+                      <span className="text-[10px] text-[#9CA3AF]">{chunk.startTimeSec}s–{chunk.endTimeSec}s ({chunk.durationSec}s)</span>
+                      {i > 0 && <span className="text-[10px] bg-[#D4A843]/15 text-[#D4A843] px-1.5 py-0.5 rounded">{chunk.transitionIn}</span>}
+                    </div>
+                    <p className="text-xs text-[#E5E7EB]/80 leading-relaxed">{chunk.scriptText}</p>
+                    {chunk.continuityNote && <p className="text-[10px] text-[#9CA3AF]/50 mt-1 italic">{chunk.continuityNote.slice(0, 100)}...</p>}
+                  </div>
+                ))}
+
+                <p className="text-[10px] text-[#9CA3AF]/50">Tip: Add [CUT], [CROSSFADE], [SLIDE], or [FADE] in your script to control where transitions happen.</p>
+              </div>
+            )}
+          </section>
+        )}
+
         {/* Generate Button */}
         {claudeParams && !videoUrl && (
           <section className="bg-[#1B2A4A]/60 border border-[#2A7B88]/20 rounded-xl p-6">
@@ -1276,10 +1425,17 @@ function App() {
               </div>
             )}
             <div className="flex items-center justify-between">
-              <div className="text-sm text-[#9CA3AF]">Est. cost: <span className="text-[#D4A843] font-semibold">{creditEstimate}</span></div>
-              <button onClick={handleGenerate} disabled={isGenerating || !script.trim()}
-                className={`flex items-center gap-2 px-8 py-3 rounded-xl font-bold text-sm transition-all ${!isGenerating && script.trim() ? 'bg-gradient-to-r from-[#D4A843] to-[#D4A843]/80 text-[#111827] hover:shadow-lg hover:shadow-[#D4A843]/25' : 'bg-[#1B2A4A] text-[#9CA3AF]/40 cursor-not-allowed'}`}>
-                {isGenerating ? <><Loader2 className="w-4 h-4 animate-spin" />Generating...</> : 'Generate Video'}
+              <div className="text-sm text-[#9CA3AF]">
+                {isLongForm
+                  ? <>Est: <span className="text-[#D4A843] font-semibold">~{segments?.chunks?.length || Math.ceil(estDurationSec / 13)} chunks × 720 credits · ~{(segments?.chunks?.length || Math.ceil(estDurationSec / 13)) * 3} min</span></>
+                  : <>Est. cost: <span className="text-[#D4A843] font-semibold">{creditEstimate}</span></>
+                }
+              </div>
+              <button onClick={handleGenerate} disabled={isGenerating || !script.trim() || (isLongForm && !segments)}
+                className={`flex items-center gap-2 px-8 py-3 rounded-xl font-bold text-sm transition-all ${!isGenerating && script.trim() && (!isLongForm || segments) ? 'bg-gradient-to-r from-[#D4A843] to-[#D4A843]/80 text-[#111827] hover:shadow-lg hover:shadow-[#D4A843]/25' : 'bg-[#1B2A4A] text-[#9CA3AF]/40 cursor-not-allowed'}`}>
+                {isGenerating ? <><Loader2 className="w-4 h-4 animate-spin" />Generating...</>
+                  : isLongForm ? `Generate ${segments?.chunks?.length || '?'} Chunks`
+                  : 'Generate Video'}
               </button>
             </div>
           </section>
