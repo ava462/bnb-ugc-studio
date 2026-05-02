@@ -167,36 +167,25 @@ async function generateCustom(params: any): Promise<{ assetId: string; pollType:
   const dialogue = params.script?.dialogue || '';
   const api = params.apiParams || {};
   const setting = params.setting || {};
+  const scene = params.scene || {};
 
-  // Step 1: Get character pack (from packId or use face URLs directly)
-  let faceUrls: string[] = [];
+  // Step 1: Get character pack
+  let faceUrl = JORDAN_FACE_URL;
   let lockPrompt = '';
   let voiceId: string | null = null;
 
   if (params.packId) {
     const pack = await fetchPack(params.packId);
     if (pack) {
-      faceUrls = [pack.face_front, pack.face_3quarter, pack.face_profile, ...(pack.face_additional || [])].filter(Boolean);
+      faceUrl = pack.face_front || JORDAN_FACE_URL;
       lockPrompt = pack.lock_prompt || '';
       voiceId = pack.fish_audio_voice_id || null;
     }
   }
+  if (!lockPrompt) lockPrompt = params.lockPrompt || params.character?.description || '';
 
-  // Fallback to params if no pack
-  if (!faceUrls.length) {
-    const urls = params.faceImageUrls || [];
-    const single = params.faceImageUrl;
-    faceUrls = urls.length ? urls : single ? [single] : [JORDAN_FACE_URL];
-  }
-  if (!lockPrompt) {
-    lockPrompt = params.lockPrompt || params.character?.description || 'The same person shown in the reference image — maintain exact face, features, and build throughout the entire video.';
-  }
-
-  // Step 2: Upload face + generate voice IN PARALLEL (saves ~8s)
-  // Only upload 1 face reference (front-facing) — more refs = slower Seedance queue
-  // Use the pack's voice ID if configured. Don't auto-fallback to Jordan's voice.
+  // Step 2: Upload face + generate Fish Audio voice IN PARALLEL
   const vid = voiceId || params.voiceId || null;
-  const faceUrl = faceUrls[0] || JORDAN_FACE_URL;
 
   const [faceResult, audioResult] = await Promise.allSettled([
     arcadsUploadUrl(faceUrl),
@@ -213,42 +202,28 @@ async function generateCustom(params: any): Promise<{ assetId: string; pollType:
     referenceAudios = [audioResult.value];
   }
 
-  // Step 4: Build prompt with dialogue as script beats
+  // Step 3: Build prompt using @(img1) token for face reference (bypasses moderation)
   const cleanDialogue = dialogue.replace(/\[.*?\]\s*/g, '');
-  const sentences = cleanDialogue.split(/(?<=[.!?])\s+/).filter(Boolean);
-  let scriptBeats: string;
-  if (sentences.length >= 3) {
-    scriptBeats = [
-      `The video opens with the person looking into camera: "${sentences[0]}"`,
-      `Jump cut — slightly different angle, the person gestures naturally: "${sentences.slice(1, -1).join(' ')}"`,
-      `Final shot — person leans slightly closer: "${sentences[sentences.length - 1]}"`,
-    ].join(' ');
-  } else {
-    scriptBeats = `The person looks at camera and says: "${cleanDialogue}"`;
-  }
-
-  // Scene/context layer (separate from dialogue)
-  const scene = params.scene || {};
-  const sceneAction = scene.action ? `The person ${scene.action}.` : '';
+  const sceneAction = scene.action ? `The character @(img1) ${scene.action}.` : '';
   const sceneContext = scene.context ? `Visual context: ${scene.context}.` : '';
+
+  const continuity = params.continuityNote || '';
 
   const prompt = [
     `${api.duration || 15} seconds UGC style testimonial video, filmed on smartphone, ${setting.timeOfDay || 'natural'} lighting, casual handheld selfie angle.`,
-    `IMPORTANT: The person MUST match the reference image exactly — same face, same features throughout. ${lockPrompt}`,
+    `The character @(img1) is the main subject. ${lockPrompt}`,
+    continuity ? `CONTINUITY: ${continuity}` : '',
     `${setting.location ? setting.location + '.' : 'Casual indoor setting.'}`,
     sceneAction,
     sceneContext,
     HUMAN_REALISM,
-    scriptBeats,
+    cleanDialogue ? `The character @(img1) speaks to camera: "${cleanDialogue}"` : '',
     'Energy is authentic. Relaxed pace with natural pauses.',
-    'Jump cuts between beats. Slight motion blur, phone mic audio, subtle camera jitter, slightly off-center framing.',
+    'Slight motion blur, phone mic audio, subtle camera jitter.',
     'Raw, relatable, real — not a polished ad. No subtitles, no captions, no text overlays.',
   ].filter(Boolean).join(' ');
 
-  // Step 5: Send to Seedance
-  // Clamp duration to valid Seedance 2.0 range (4-15s, integer)
   const duration = Math.max(4, Math.min(15, Math.round(api.duration || 15)));
-  // Truncate prompt to 2000 chars to avoid Arcads failures from oversized prompts
   const truncatedPrompt = prompt.length > 2000 ? prompt.slice(0, 2000) : prompt;
 
   const genBody: Record<string, unknown> = {

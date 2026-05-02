@@ -547,6 +547,7 @@ function App() {
           const chunkParams = {
             ...params,
             script: { dialogue: chunk.scriptText },
+            continuityNote: chunk.continuityNote || '',
             apiParams: { ...params.apiParams, duration: Math.max(4, Math.min(15, Math.round(chunk.durationSec || 10))) },
           }
 
