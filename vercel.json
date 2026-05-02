@@ -1,6 +1,7 @@
 {
   "functions": {
     "api/generate.ts": { "maxDuration": 300 },
+    "api/generate-longform.ts": { "maxDuration": 60 },
     "api/status.ts": { "maxDuration": 30 },
     "api/interpret.ts": { "maxDuration": 60 },
     "api/voice-preview.ts": { "maxDuration": 30 },

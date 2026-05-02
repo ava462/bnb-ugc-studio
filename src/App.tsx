@@ -611,9 +611,23 @@ function App() {
       const assetId = genResult.assetId
       if (!assetId) throw new Error('No assetId returned')
 
+      const MAX_POLLS = 120 // 120 × 5s = 10 min max
       let pollCount = 0
+      const getDynamicStatus = (count: number) => {
+        if (count <= 6) return 'Starting generation...'
+        if (count <= 18) return 'Generating with Seedance 2.0... (3-5 min)'
+        if (count <= 36) return 'Still rendering... almost there'
+        return 'Taking longer than usual...'
+      }
+      setStatusText('Starting generation...')
       pollRef.current = setInterval(async () => {
         pollCount++
+        if (pollCount > MAX_POLLS) {
+          if (pollRef.current) clearInterval(pollRef.current)
+          setError('Generation timed out after 10 minutes. Please try again.')
+          setIsGenerating(false)
+          return
+        }
         try {
           const statusRes = await fetch(`/api/status?assetId=${assetId}`)
           if (!statusRes.ok) return
@@ -634,7 +648,7 @@ function App() {
           }
           const newProgress = Math.min(20 + pollCount * 3, 90)
           setProgress(newProgress)
-          setStatusText(statusData.statusText || 'Generating with Seedance 2.0...')
+          setStatusText(getDynamicStatus(pollCount))
         } catch {
           // Keep polling on network errors
         }
@@ -1318,6 +1332,7 @@ function App() {
           <div className="flex items-center gap-3 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-400">
             <AlertCircle className="w-5 h-5 shrink-0" />
             <span>{error}</span>
+            <button onClick={handleReset} className="ml-2 px-3 py-1 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 font-medium text-xs border border-red-500/30">Try Again</button>
             <button onClick={() => setError('')} className="ml-auto text-red-400/60 hover:text-red-400"><X className="w-4 h-4" /></button>
           </div>
         )}
