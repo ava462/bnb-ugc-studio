@@ -533,75 +533,67 @@ function App() {
     try {
       const params = buildApiParams()
 
-      // Long-form: generate chunks sequentially
+      // Long-form: generate chunks sequentially with auto-retry on moderation failure
       if (isLongForm && segments?.chunks?.length > 1) {
         const totalChunks = segments.chunks.length
         const chunkVideoUrls: string[] = []
 
-        for (let i = 0; i < totalChunks; i++) {
-          setStatusText(`🎬 Generating chunk ${i + 1}/${totalChunks}...`)
-          setProgress(10 + Math.round((i / totalChunks) * 70))
-
-          // Build per-chunk params with chunk dialogue
-          const chunk = segments.chunks[i]
+        // Helper: generate one chunk, poll until done, retry without refs on moderation failure
+        const generateOneChunk = async (chunkIdx: number, useRefs: boolean): Promise<string> => {
+          const chunk = segments.chunks[chunkIdx]
+          const dur = Math.max(4, Math.min(15, Math.round(chunk.durationSec || 10)))
           const chunkParams = {
             ...params,
             script: { dialogue: chunk.scriptText },
             continuityNote: chunk.continuityNote || '',
-            apiParams: { ...params.apiParams, duration: Math.max(4, Math.min(15, Math.round(chunk.durationSec || 10))) },
+            apiParams: { ...params.apiParams, duration: dur },
           }
+
+          // If not using refs, switch to seedance path (no packId, no face upload)
+          const genPath = useRefs ? selectedPath : 'seedance'
+          const genParams = useRefs ? chunkParams : { ...chunkParams, packId: undefined }
 
           const res = await fetch('/api/generate', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ path: selectedPath, parameters: chunkParams }),
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: genPath, parameters: genParams }),
           })
-          if (!res.ok) {
-            let errMsg = `Chunk ${i + 1} generation failed (HTTP ${res.status})`
-            try { const errData = await res.json(); errMsg = errData.error || errMsg } catch {}
-            throw new Error(errMsg)
-          }
-          const genResult = await res.json()
-          if (genResult.error) throw new Error(genResult.error)
-          if (!genResult.assetId) throw new Error(`Chunk ${i + 1}: no asset ID returned — generation may have failed silently`)
+          if (!res.ok) throw new Error(`Chunk ${chunkIdx + 1} submit failed`)
+          const { assetId } = await res.json()
+          if (!assetId) throw new Error(`Chunk ${chunkIdx + 1} no assetId`)
 
-          // Poll until complete (max 120 attempts = 10 min per chunk)
-          const assetId = genResult.assetId
-          let chunkPollCount = 0
-          const MAX_CHUNK_POLLS = 600 // 600 × 5s = 50 min — effectively no timeout
-
-          let done = false
-          while (!done) {
+          // Poll
+          for (let poll = 0; poll < 120; poll++) {
             await new Promise(r => setTimeout(r, 5000))
-            chunkPollCount++
-
-            if (chunkPollCount > MAX_CHUNK_POLLS) {
-              throw new Error(`Chunk ${i + 1} timed out after 10 minutes — please try again`)
-            }
-
-            const elapsed = chunkPollCount * 5
-            let chunkStatus = `⏳ Chunk ${i + 1}/${totalChunks} processing...`
-            if (elapsed > 180) chunkStatus = `⏳ Chunk ${i + 1}/${totalChunks} — taking longer than usual...`
-            else if (elapsed > 90) chunkStatus = `⏳ Chunk ${i + 1}/${totalChunks} — almost there...`
-            else if (elapsed > 30) chunkStatus = `⏳ Chunk ${i + 1}/${totalChunks} — generating (3-5 min)...`
-            setStatusText(chunkStatus)
-
+            const elapsed = poll * 5
+            setStatusText(
+              useRefs
+                ? `⏳ Chunk ${chunkIdx + 1}/${totalChunks} (${elapsed}s)...`
+                : `⏳ Chunk ${chunkIdx + 1}/${totalChunks} retry (${elapsed}s)...`
+            )
             try {
-              const statusRes = await fetch(`/api/status?assetId=${assetId}`)
-              if (!statusRes.ok) continue
-              const statusData = await statusRes.json()
-              if (statusData.status === 'complete' && statusData.videoUrl) {
-                chunkVideoUrls.push(statusData.videoUrl)
-                done = true
-              } else if (statusData.status === 'failed') {
-                throw new Error(`Chunk ${i + 1} failed: ${statusData.error || 'Generation failed on Arcads side — try again'}`)
+              const s = await fetch(`/api/status?assetId=${assetId}`).then(r => r.json())
+              if (s.status === 'complete' && s.videoUrl) return s.videoUrl
+              if (s.status === 'failed') {
+                const err = s.error || ''
+                if ((err.includes('likenesses') || err.includes('image_urls')) && useRefs) {
+                  // Moderation blocked — retry without face refs
+                  setStatusText(`⚠️ Chunk ${chunkIdx + 1} face blocked — retrying...`)
+                  return generateOneChunk(chunkIdx, false)
+                }
+                throw new Error(`Chunk ${chunkIdx + 1}: ${err}`)
               }
-            } catch (pollErr: any) {
-              // If it's our own thrown error, rethrow
-              if (pollErr.message?.includes('failed') || pollErr.message?.includes('timed out')) throw pollErr
-              // Otherwise network glitch — keep polling
+            } catch (e: any) {
+              if (e.message?.includes('Chunk')) throw e
             }
           }
+          throw new Error(`Chunk ${chunkIdx + 1} timeout`)
+        }
+
+        for (let i = 0; i < totalChunks; i++) {
+          setStatusText(`🎬 Generating chunk ${i + 1}/${totalChunks}...`)
+          setProgress(10 + Math.round((i / totalChunks) * 70))
+          const videoUrl = await generateOneChunk(i, selectedPath === 'custom')
+          chunkVideoUrls.push(videoUrl)
         }
 
         // Stitch all chunks together via API

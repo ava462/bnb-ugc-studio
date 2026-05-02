@@ -184,22 +184,26 @@ async function generateCustom(params: any): Promise<{ assetId: string; pollType:
   }
   if (!lockPrompt) lockPrompt = params.lockPrompt || params.character?.description || '';
 
-  // Step 2: Upload face + generate Fish Audio voice IN PARALLEL
-  const vid = voiceId || params.voiceId || null;
-
-  const [faceResult, audioResult] = await Promise.allSettled([
-    arcadsUploadUrl(faceUrl),
-    vid && dialogue.length > 20
-      ? generateFishAudio(dialogue, vid).then(buf => arcadsUploadBuffer(buf, 'audio/mpeg'))
-      : Promise.resolve(null),
-  ]);
-
-  const referenceImages: string[] = [];
-  if (faceResult.status === 'fulfilled') referenceImages.push(faceResult.value);
-
+  // Step 2: Try to upload face as referenceImages (may fail moderation)
+  // If it fails, generate with prompt-only character description
+  let referenceImages: string[] = [];
   let referenceAudios: string[] | undefined;
-  if (audioResult.status === 'fulfilled' && audioResult.value) {
-    referenceAudios = [audioResult.value];
+
+  try {
+    const facePath = await arcadsUploadUrl(faceUrl);
+    referenceImages = [facePath];
+
+    // Only add voice ref if face ref succeeded (Seedance requires images with audios)
+    const vid = voiceId || params.voiceId || null;
+    if (vid && dialogue.length > 20) {
+      const audioBuffer = await generateFishAudio(dialogue, vid);
+      const audioPath = await arcadsUploadBuffer(audioBuffer, 'audio/mpeg');
+      referenceAudios = [audioPath];
+    }
+  } catch {
+    // Face upload failed — proceed with prompt-only (always works)
+    referenceImages = [];
+    referenceAudios = undefined;
   }
 
   // Step 3: Build prompt using @(img1) token for face reference (bypasses moderation)
@@ -238,13 +242,30 @@ async function generateCustom(params: any): Promise<{ assetId: string; pollType:
     ...(referenceAudios ? { referenceAudios } : {}),
   };
 
-  const genRes = await fetch('https://external-api.arcads.ai/v2/videos/generate', {
+  let genRes = await fetch('https://external-api.arcads.ai/v2/videos/generate', {
     method: 'POST',
     headers: { 'Authorization': ARCADS_BASIC_AUTH, 'Content-Type': 'application/json' },
     body: JSON.stringify(genBody),
   });
 
-  if (!genRes.ok) throw new Error(`Seedance error: ${await genRes.text()}`);
+  // If Seedance returns error (moderation), retry without references
+  if (!genRes.ok) {
+    const errText = await genRes.text();
+    if (errText.includes('image_urls') || errText.includes('likenesses')) {
+      console.log('[generate] Face ref blocked by moderation — retrying without references');
+      delete genBody.referenceImages;
+      delete genBody.referenceAudios;
+      genRes = await fetch('https://external-api.arcads.ai/v2/videos/generate', {
+        method: 'POST',
+        headers: { 'Authorization': ARCADS_BASIC_AUTH, 'Content-Type': 'application/json' },
+        body: JSON.stringify(genBody),
+      });
+      if (!genRes.ok) throw new Error(`Seedance error (retry): ${await genRes.text()}`);
+    } else {
+      throw new Error(`Seedance error: ${errText}`);
+    }
+  }
+
   const data = await genRes.json();
   return { assetId: data.id, pollType: 'arcads_asset' };
 }
