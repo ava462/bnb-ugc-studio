@@ -595,7 +595,7 @@ function App() {
         for (let i = 0; i < totalChunks; i++) {
           setStatusText(`🎬 Generating chunk ${i + 1}/${totalChunks}...`)
           setProgress(10 + Math.round((i / totalChunks) * 70))
-          const videoUrl = await generateOneChunk(i, selectedPath === 'custom')
+          const videoUrl = await generateOneChunk(i, 1)
           chunkVideoUrls.push(videoUrl)
         }
 
