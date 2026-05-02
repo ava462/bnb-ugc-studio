@@ -63,7 +63,13 @@ async function generateFishAudio(script: string, voiceId?: string): Promise<Buff
   return Buffer.from(await res.arrayBuffer());
 }
 
-const HUMAN_REALISM = 'NATURAL HUMAN BEHAVIOR: The person blinks at a normal relaxed rate, occasionally glances away then back. Subtle micro-movements only: a slight head tilt, a small posture shift. Less is more — calm, natural person talking, not an animated performance.';
+const HUMAN_REALISM = `MANDATORY HUMAN REALISM — apply throughout the entire video:
+Eye behavior: natural blink rate, gaze drifts slightly off-lens then returns, brief downward glance when recalling a thought, eyes narrow slightly when making a serious point.
+Head and body: subtle weight shifts between feet, slight lean forward on key statements, one-shoulder micro-shrug on casual lines, chin dip when transitioning between thoughts.
+Hands: idle fidget or light grip adjustment between spoken lines, open-palm gesture on emphasis words, brief touch of chin or collar during pauses.
+Micro-expressions: asymmetric half-smile on confident lines, slight eyebrow raise before a reveal, lips press together briefly between sentences.
+Pacing: natural breath pauses between sentences — not robotic continuous speech. One deliberate 0.5-second pause mid-video where the person collects their thought.
+DO NOT overdo any single behavior. Each cue should appear once or twice across the video, spread naturally. The goal is a real person talking — not an actor performing.`;
 
 function compose9LayerPrompt(params: any): string {
   const script = params.script?.dialogue || '';
