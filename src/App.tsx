@@ -547,7 +547,7 @@ function App() {
           const chunkParams = {
             ...params,
             script: { dialogue: chunk.scriptText },
-            apiParams: { ...params.apiParams, duration: Math.min(chunk.durationSec, 15) },
+            apiParams: { ...params.apiParams, duration: Math.max(4, Math.min(15, Math.round(chunk.durationSec || 10))) },
           }
 
           const res = await fetch('/api/generate', {
@@ -567,7 +567,7 @@ function App() {
           // Poll until complete (max 120 attempts = 10 min per chunk)
           const assetId = genResult.assetId
           let chunkPollCount = 0
-          const MAX_CHUNK_POLLS = 120
+          const MAX_CHUNK_POLLS = 600 // 600 × 5s = 50 min — effectively no timeout
 
           let done = false
           while (!done) {
@@ -603,10 +603,33 @@ function App() {
           }
         }
 
-        // For now, play the last chunk (full Remotion assembly requires the render server)
-        // TODO: Send to render server for proper stitching with transitions + captions
-        setVideoUrl(chunkVideoUrls[chunkVideoUrls.length - 1])
-        setStatusText(`✅ ${totalChunks} chunks generated!`)
+        // Stitch all chunks together via API
+        setStatusText('🎬 Stitching chunks together...')
+        setProgress(85)
+
+        try {
+          const stitchRes = await fetch('/api/stitch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ videoUrls: chunkVideoUrls }),
+          })
+          if (stitchRes.ok) {
+            const stitchData = await stitchRes.json()
+            if (stitchData.videoUrl) {
+              setVideoUrl(stitchData.videoUrl)
+              setStatusText('✅ Done!')
+              setProgress(100)
+              setIsGenerating(false)
+              return
+            }
+          }
+        } catch (_stitchErr) {
+          // Stitch failed — fall through to fallback
+        }
+
+        // Fallback: stitching unavailable, show first chunk
+        setVideoUrl(chunkVideoUrls[0])
+        setStatusText(`✅ ${totalChunks} chunks ready (stitching unavailable — showing chunk 1)`)
         setProgress(100)
         setIsGenerating(false)
         return

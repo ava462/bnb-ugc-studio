@@ -34,7 +34,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (data.status === 'failed') {
       return res.status(200).json({
         status: 'failed',
-        error: data.error || 'Generation failed',
+        error: data.error || data.message || data.errorMessage || JSON.stringify(data) || 'Generation failed on Arcads side',
         progress: 0,
       });
     }

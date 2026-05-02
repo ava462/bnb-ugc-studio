@@ -123,16 +123,21 @@ async function generateUGC(params: any): Promise<{ assetId: string; pollType: 'a
     referenceImages.push(path);
   }
 
+  // Clamp duration to valid Seedance 2.0 range (4-15s, integer)
+  const duration = Math.max(4, Math.min(15, Math.round(api.duration || 15)));
+
+  // Truncate prompt to 2000 chars to avoid Arcads failures from oversized prompts
+  const truncatedPrompt = prompt.length > 2000 ? prompt.slice(0, 2000) : prompt;
+
   const genRes = await fetch('https://external-api.arcads.ai/v2/videos/generate', {
     method: 'POST',
     headers: { 'Authorization': ARCADS_BASIC_AUTH, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: 'seedance-2.0',
-      prompt,
+      prompt: truncatedPrompt,
       aspectRatio: api.aspectRatio || '9:16',
-      duration: api.duration || 15,
+      duration,
       resolution: api.resolution || '720p',
-      audioEnabled: true,
       productId: ARCADS_PRODUCT_ID,
       ...(referenceImages.length ? { referenceImages } : {}),
     }),
@@ -241,11 +246,16 @@ async function generateCustom(params: any): Promise<{ assetId: string; pollType:
   ].filter(Boolean).join(' ');
 
   // Step 5: Send to Seedance
+  // Clamp duration to valid Seedance 2.0 range (4-15s, integer)
+  const duration = Math.max(4, Math.min(15, Math.round(api.duration || 15)));
+  // Truncate prompt to 2000 chars to avoid Arcads failures from oversized prompts
+  const truncatedPrompt = prompt.length > 2000 ? prompt.slice(0, 2000) : prompt;
+
   const genBody: Record<string, unknown> = {
     model: 'seedance-2.0',
-    prompt,
+    prompt: truncatedPrompt,
     aspectRatio: api.aspectRatio || '9:16',
-    duration: api.duration || 15,
+    duration,
     resolution: api.resolution || '720p',
     audioEnabled: true,
     productId: ARCADS_PRODUCT_ID,
