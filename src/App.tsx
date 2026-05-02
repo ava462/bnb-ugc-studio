@@ -538,8 +538,11 @@ function App() {
         const totalChunks = segments.chunks.length
         const chunkVideoUrls: string[] = []
 
-        // Helper: generate one chunk, poll until done, retry without refs on moderation failure
-        const generateOneChunk = async (chunkIdx: number, useRefs: boolean): Promise<string> => {
+        // Helper: generate one chunk with up to 3 retries on moderation failure
+        // Keeps using custom path + face refs each retry (moderation is probabilistic ~75% pass)
+        // After 3 failures, falls back to seedance path (no face refs, always passes)
+        const generateOneChunk = async (chunkIdx: number, attempt = 1): Promise<string> => {
+          const MAX_ATTEMPTS = 3
           const chunk = segments.chunks[chunkIdx]
           const dur = Math.max(4, Math.min(15, Math.round(chunk.durationSec || 10)))
           const chunkParams = {
@@ -549,9 +552,11 @@ function App() {
             apiParams: { ...params.apiParams, duration: dur },
           }
 
-          // If not using refs, switch to seedance path (no packId, no face upload)
-          const genPath = useRefs ? selectedPath : 'seedance'
-          const genParams = useRefs ? chunkParams : { ...chunkParams, packId: undefined }
+          const useCustom = attempt <= MAX_ATTEMPTS && selectedPath === 'custom'
+          const genPath = useCustom ? 'custom' : 'seedance'
+          const genParams = useCustom ? chunkParams : { ...chunkParams, packId: undefined }
+
+          if (attempt > 1) setStatusText(`🔄 Chunk ${chunkIdx + 1}/${totalChunks} attempt ${attempt}...`)
 
           const res = await fetch('/api/generate', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -565,20 +570,18 @@ function App() {
           for (let poll = 0; poll < 120; poll++) {
             await new Promise(r => setTimeout(r, 5000))
             const elapsed = poll * 5
-            setStatusText(
-              useRefs
-                ? `⏳ Chunk ${chunkIdx + 1}/${totalChunks} (${elapsed}s)...`
-                : `⏳ Chunk ${chunkIdx + 1}/${totalChunks} retry (${elapsed}s)...`
-            )
+            setStatusText(`⏳ Chunk ${chunkIdx + 1}/${totalChunks} (${elapsed}s)${attempt > 1 ? ` [attempt ${attempt}]` : ''}...`)
             try {
               const s = await fetch(`/api/status?assetId=${assetId}`).then(r => r.json())
               if (s.status === 'complete' && s.videoUrl) return s.videoUrl
               if (s.status === 'failed') {
                 const err = s.error || ''
-                if ((err.includes('likenesses') || err.includes('image_urls')) && useRefs) {
-                  // Moderation blocked — retry without face refs
-                  setStatusText(`⚠️ Chunk ${chunkIdx + 1} face blocked — retrying...`)
-                  return generateOneChunk(chunkIdx, false)
+                if ((err.includes('likenesses') || err.includes('image_urls'))) {
+                  if (attempt < MAX_ATTEMPTS + 1) {
+                    // Retry with face refs (moderation is random, might pass next time)
+                    setStatusText(`⚠️ Chunk ${chunkIdx + 1} blocked — retrying (${attempt}/${MAX_ATTEMPTS})...`)
+                    return generateOneChunk(chunkIdx, attempt + 1)
+                  }
                 }
                 throw new Error(`Chunk ${chunkIdx + 1}: ${err}`)
               }
