@@ -555,25 +555,50 @@ function App() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: selectedPath, parameters: chunkParams }),
           })
-          if (!res.ok) throw new Error(`Chunk ${i + 1} generation failed`)
+          if (!res.ok) {
+            let errMsg = `Chunk ${i + 1} generation failed (HTTP ${res.status})`
+            try { const errData = await res.json(); errMsg = errData.error || errMsg } catch {}
+            throw new Error(errMsg)
+          }
           const genResult = await res.json()
           if (genResult.error) throw new Error(genResult.error)
+          if (!genResult.assetId) throw new Error(`Chunk ${i + 1}: no asset ID returned — generation may have failed silently`)
 
-          // Poll until complete
+          // Poll until complete (max 120 attempts = 10 min per chunk)
           const assetId = genResult.assetId
-          setStatusText(`⏳ Chunk ${i + 1}/${totalChunks} processing...`)
+          let chunkPollCount = 0
+          const MAX_CHUNK_POLLS = 120
 
           let done = false
           while (!done) {
             await new Promise(r => setTimeout(r, 5000))
-            const statusRes = await fetch(`/api/status?assetId=${assetId}`)
-            if (!statusRes.ok) continue
-            const statusData = await statusRes.json()
-            if (statusData.status === 'complete' && statusData.videoUrl) {
-              chunkVideoUrls.push(statusData.videoUrl)
-              done = true
-            } else if (statusData.status === 'failed') {
-              throw new Error(`Chunk ${i + 1} failed: ${statusData.error || 'unknown'}`)
+            chunkPollCount++
+
+            if (chunkPollCount > MAX_CHUNK_POLLS) {
+              throw new Error(`Chunk ${i + 1} timed out after 10 minutes — please try again`)
+            }
+
+            const elapsed = chunkPollCount * 5
+            let chunkStatus = `⏳ Chunk ${i + 1}/${totalChunks} processing...`
+            if (elapsed > 180) chunkStatus = `⏳ Chunk ${i + 1}/${totalChunks} — taking longer than usual...`
+            else if (elapsed > 90) chunkStatus = `⏳ Chunk ${i + 1}/${totalChunks} — almost there...`
+            else if (elapsed > 30) chunkStatus = `⏳ Chunk ${i + 1}/${totalChunks} — generating (3-5 min)...`
+            setStatusText(chunkStatus)
+
+            try {
+              const statusRes = await fetch(`/api/status?assetId=${assetId}`)
+              if (!statusRes.ok) continue
+              const statusData = await statusRes.json()
+              if (statusData.status === 'complete' && statusData.videoUrl) {
+                chunkVideoUrls.push(statusData.videoUrl)
+                done = true
+              } else if (statusData.status === 'failed') {
+                throw new Error(`Chunk ${i + 1} failed: ${statusData.error || 'Generation failed on Arcads side — try again'}`)
+              }
+            } catch (pollErr: any) {
+              // If it's our own thrown error, rethrow
+              if (pollErr.message?.includes('failed') || pollErr.message?.includes('timed out')) throw pollErr
+              // Otherwise network glitch — keep polling
             }
           }
         }
