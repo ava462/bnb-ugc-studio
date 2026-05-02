@@ -21,12 +21,23 @@ BREAKPOINTS — split at:
 - Rhetorical pauses
 - Before "but," "however," "the thing is," "here's what happened"
 
-USER TRANSITION TAGS — if the script contains these inline tags, ALWAYS split at that exact point and use the specified transition type:
-- [CUT] → force a hard cut here (transitionIn: "cut", transitionDuration: 0)
-- [CROSSFADE] → force a crossfade here (transitionIn: "crossfade", transitionDuration: 12)
-- [SLIDE] → force a slide transition (transitionIn: "slide-left", transitionDuration: 8)
-- [FADE] → force a fade-to-black/fade-from-black (transitionIn: "fade-from-black", transitionDuration: 10)
-Strip these tags from the scriptText in each chunk — they're instructions, not dialogue.
+USER TRANSITION TAGS — if the script contains these inline tags, ALWAYS split at that exact point and use the specified transition:
+- [CUT] → hard cut (transitionIn: "cut", transitionDuration: 0)
+- [CROSSFADE] → crossfade (transitionIn: "crossfade", transitionDuration: 12)
+- [SLIDE] → slide (transitionIn: "slide-left", transitionDuration: 8)
+- [FADE] → fade through black (transitionIn: "fade-from-black", transitionDuration: 10)
+
+USER EDIT TAGS — these DON'T create splits. They add edit cues to the chunk where they appear:
+- [ZOOM] → slow zoom in 105-108% on the next sentence (editCue type: "zoom", zoomPercent: 106)
+- [ZOOM IN] → push in zoom 108-112% (editCue type: "zoom", zoomPercent: 110)
+- [ZOOM OUT] → pull out zoom from 110% to 100% (editCue type: "zoom", zoomPercent: 100)
+- [EMPHASIS] → brief brightness flash on the next word/phrase (editCue type: "emphasis")
+- [TEXT:your text here] → text overlay card shown for 3 seconds (editCue type: "text-overlay", description: the text, style: "stat")
+- [SLOW] → slight slow-mo feel on next sentence (editCue type: "emphasis", description: "slow motion")
+- [BROLL:description] → b-roll insert for 2-3 seconds (editCue type: "b-roll", description: the text)
+
+Strip ALL tags from scriptText — they're edit instructions, not dialogue.
+Place the editCue at the approximate timestamp where the tag appeared in the script.
 
 STRUCTURE:
 - First chunk: HOOK (attention grab)

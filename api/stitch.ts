@@ -7,16 +7,19 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY!;
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { videoUrls } = req.body as { videoUrls: string[] };
+  const { videoUrls, chunks } = req.body as { videoUrls: string[]; chunks?: any[] };
   if (!videoUrls?.length) return res.status(400).json({ error: 'videoUrls required' });
   if (videoUrls.length === 1) return res.json({ videoUrl: videoUrls[0] });
 
+  // Use edit-aware endpoint if chunks have edit cues
+  const hasEdits = chunks?.some((c: any) => c?.editCues?.length > 0);
+  const endpoint = hasEdits ? '/stitch-with-edits' : '/stitch';
+
   try {
-    // Try render server first (has ffmpeg)
-    const stitchRes = await fetch(`${RENDER_SERVER}/stitch`, {
+    const stitchRes = await fetch(`${RENDER_SERVER}${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ videoUrls }),
+      body: JSON.stringify({ videoUrls, chunks }),
     });
 
     if (stitchRes.ok) {

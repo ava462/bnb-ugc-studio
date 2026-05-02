@@ -612,7 +612,7 @@ function App() {
           const stitchRes = await fetch('/api/stitch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ videoUrls: chunkVideoUrls }),
+            body: JSON.stringify({ videoUrls: chunkVideoUrls, chunks: segments?.chunks }),
           })
           if (stitchRes.ok) {
             const stitchData = await stitchRes.json()
@@ -1465,10 +1465,26 @@ function App() {
                     </div>
                     <p className="text-xs text-[#E5E7EB]/80 leading-relaxed">{chunk.scriptText}</p>
                     {chunk.continuityNote && <p className="text-[10px] text-[#9CA3AF]/50 mt-1 italic">{chunk.continuityNote.slice(0, 100)}...</p>}
+                    {chunk.editCues?.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {chunk.editCues.map((cue: any, j: number) => (
+                          <span key={j} className="text-[9px] bg-[#D4A843]/10 text-[#D4A843]/70 px-1.5 py-0.5 rounded">
+                            {cue.type === 'zoom' ? `🔍 ${cue.zoomPercent || 106}%` : cue.type === 'text-overlay' ? `📝 "${cue.description?.slice(0, 20)}"` : cue.type === 'emphasis' ? '✨ emphasis' : cue.type === 'b-roll' ? `🎞️ ${cue.description?.slice(0, 15)}` : cue.type}
+                            {' '}{cue.startSec}s
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
 
-                <p className="text-[10px] text-[#9CA3AF]/50">Tip: Add [CUT], [CROSSFADE], [SLIDE], or [FADE] in your script to control where transitions happen.</p>
+                <div className="space-y-1.5 text-[10px] text-[#9CA3AF]/50">
+                  <p className="font-medium text-[#9CA3AF]/70">Script tags you can use:</p>
+                  <p><span className="text-[#D4A843]/60">Transitions:</span> [CUT] [CROSSFADE] [SLIDE] [FADE] — force a cut at that point</p>
+                  <p><span className="text-[#D4A843]/60">Edits:</span> [ZOOM] [ZOOM IN] [ZOOM OUT] — zoom on the next line</p>
+                  <p><span className="text-[#D4A843]/60">Effects:</span> [EMPHASIS] — brightness flash · [SLOW] — slow-mo feel</p>
+                  <p><span className="text-[#D4A843]/60">Overlays:</span> [TEXT:$23K/month] — text card · [BROLL:booking dashboard] — b-roll insert</p>
+                </div>
               </div>
             )}
           </section>
