@@ -185,24 +185,22 @@ async function generateCustom(params: any): Promise<{ assetId: string; pollType:
   }
   if (!lockPrompt) lockPrompt = params.lockPrompt || params.character?.description || '';
 
-  // Step 2: Try to upload face as referenceImages (may fail moderation)
-  // If it fails, generate with prompt-only character description
+  // Step 2: Try to upload face as referenceImages with an 8s timeout.
+  // If it times out or throws, fall through to prompt-only mode (always works).
+  // TODO: re-enable Fish Audio TTS once we have a faster path (e.g. pre-cached audio uploads).
+  // Skipping TTS for now — adds ~5-10s and risks Vercel timeout.
   let referenceImages: string[] = [];
   let referenceAudios: string[] | undefined;
 
   try {
-    const facePath = await arcadsUploadUrl(faceUrl);
+    const faceUpload = arcadsUploadUrl(faceUrl);
+    const uploadTimeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('face upload timeout')), 8000)
+    );
+    const facePath = await Promise.race([faceUpload, uploadTimeout]);
     referenceImages = [facePath];
-
-    // Only add voice ref if face ref succeeded (Seedance requires images with audios)
-    const vid = voiceId || params.voiceId || null;
-    if (vid && dialogue.length > 20) {
-      const audioBuffer = await generateFishAudio(dialogue, vid);
-      const audioPath = await arcadsUploadBuffer(audioBuffer, 'audio/mpeg');
-      referenceAudios = [audioPath];
-    }
-  } catch {
-    // Face upload failed — proceed with prompt-only (always works)
+  } catch (err) {
+    console.log('[generate:custom] Face upload skipped:', (err as Error).message);
     referenceImages = [];
     referenceAudios = undefined;
   }
