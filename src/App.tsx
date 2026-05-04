@@ -84,6 +84,8 @@ function App() {
   const [progress, setProgress] = useState(0)
   const [error, setError] = useState('')
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
+  const [chunkVideoUrls, setChunkVideoUrls] = useState<string[]>([])
+  const [isFallback, setIsFallback] = useState(false)
 
   // Shared params
   const [script, setScript] = useState('')
@@ -173,7 +175,7 @@ function App() {
   void _suppressUnused
 
   useEffect(() => {
-    setClaudeParams(null); setBrainDump(''); setScript(''); setVideoUrl(null); setError(''); setStatusText(''); setProgress(0); setIsGenerating(false)
+    setClaudeParams(null); setBrainDump(''); setScript(''); setVideoUrl(null); setChunkVideoUrls([]); setIsFallback(false); setError(''); setStatusText(''); setProgress(0); setIsGenerating(false); setSegments(null); setMarkedScript('')
     setSelectedPack(null)
   }, [selectedPath])
 
@@ -491,7 +493,7 @@ function App() {
   const cleanScript = script.replace(/\[.*?\]\s*/g, '')
   const scriptWordCount = cleanScript.split(/\s+/).filter(Boolean).length
   const estDurationSec = Math.round((scriptWordCount / 150) * 60)
-  const isLongForm = estDurationSec > 15
+  const isLongForm = estDurationSec > 15 || scriptWordCount > 45
 
   // ── Segment long scripts ──────────────────────────────────────────────────
 
@@ -518,32 +520,53 @@ function App() {
   const handleGenerate = async () => {
     if (!selectedPath || !script.trim()) return
 
-    // Long-form: if >15s and not yet segmented, segment first
-    if (isLongForm && !segments) {
-      await handleSegment()
-      return // Show segments first, user clicks Generate again
-    }
-
     setIsGenerating(true)
     setError('')
+    setVideoUrl(null)
+    setChunkVideoUrls([])
+    setIsFallback(false)
+
+    // Long-form: auto-segment if not already done
+    let activeSegments = segments
+    if (isLongForm && !activeSegments) {
+      const estChunks = Math.ceil(estDurationSec / 13)
+      setStatusText(`Long script detected — splitting into ${estChunks} chunks...`)
+      setProgress(2)
+      try {
+        const res = await fetch('/api/segment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ script, path: selectedPath, parameters: buildApiParams() }),
+        })
+        if (!res.ok) throw new Error('Segmentation failed')
+        const data = await res.json()
+        setSegments(data)
+        setMarkedScript(data.markedScript || '')
+        activeSegments = data
+      } catch (err: any) {
+        setError(err.message)
+        setIsGenerating(false)
+        setStatusText('')
+        return
+      }
+    }
+
     setStatusText('Submitting job...')
     setProgress(5)
-    setVideoUrl(null)
 
     try {
       const params = buildApiParams()
 
       // Long-form: generate chunks sequentially with auto-retry on moderation failure
-      if (isLongForm && segments?.chunks?.length > 1) {
-        const totalChunks = segments.chunks.length
-        const chunkVideoUrls: string[] = []
+      if (isLongForm && activeSegments?.chunks?.length > 1) {
+        const totalChunks = activeSegments.chunks.length
+        const collectedUrls: string[] = []
+        setStatusText(`Long script detected — splitting into ${totalChunks} chunks`)
 
         // Helper: generate one chunk with up to 3 retries on moderation failure
-        // Keeps using custom path + face refs each retry (moderation is probabilistic ~75% pass)
-        // After 3 failures, falls back to seedance path (no face refs, always passes)
         const generateOneChunk = async (chunkIdx: number, attempt = 1): Promise<string> => {
           const MAX_ATTEMPTS = 3
-          const chunk = segments.chunks[chunkIdx]
+          const chunk = activeSegments!.chunks[chunkIdx]
           const dur = Math.max(4, Math.min(15, Math.round(chunk.durationSec || 10)))
           const chunkParams = {
             ...params,
@@ -556,7 +579,7 @@ function App() {
           const genPath = useCustom ? 'custom' : 'seedance'
           const genParams = useCustom ? chunkParams : { ...chunkParams, packId: undefined }
 
-          if (attempt > 1) setStatusText(`🔄 Chunk ${chunkIdx + 1}/${totalChunks} attempt ${attempt}...`)
+          if (attempt > 1) setStatusText(`Generating clip ${chunkIdx + 1} of ${totalChunks} — retry ${attempt}...`)
 
           const res = await fetch('/api/generate', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -570,7 +593,7 @@ function App() {
           for (let poll = 0; poll < 120; poll++) {
             await new Promise(r => setTimeout(r, 5000))
             const elapsed = poll * 5
-            setStatusText(`⏳ Chunk ${chunkIdx + 1}/${totalChunks} (${elapsed}s)${attempt > 1 ? ` [attempt ${attempt}]` : ''}...`)
+            setStatusText(`Generating clip ${chunkIdx + 1} of ${totalChunks}... (${elapsed}s)${attempt > 1 ? ` [retry ${attempt}]` : ''}`)
             try {
               const s = await fetch(`/api/status?assetId=${assetId}`).then(r => r.json())
               if (s.status === 'complete' && s.videoUrl) return s.videoUrl
@@ -578,8 +601,7 @@ function App() {
                 const err = s.error || ''
                 if ((err.includes('likenesses') || err.includes('image_urls'))) {
                   if (attempt < MAX_ATTEMPTS + 1) {
-                    // Retry with face refs (moderation is random, might pass next time)
-                    setStatusText(`⚠️ Chunk ${chunkIdx + 1} blocked — retrying (${attempt}/${MAX_ATTEMPTS})...`)
+                    setStatusText(`Clip ${chunkIdx + 1} blocked — retrying (${attempt}/${MAX_ATTEMPTS})...`)
                     return generateOneChunk(chunkIdx, attempt + 1)
                   }
                 }
@@ -593,30 +615,32 @@ function App() {
         }
 
         for (let i = 0; i < totalChunks; i++) {
-          setStatusText(`🎬 Generating chunk ${i + 1}/${totalChunks}...`)
+          setStatusText(`Generating clip ${i + 1} of ${totalChunks}...`)
           setProgress(10 + Math.round((i / totalChunks) * 70))
-          const videoUrl = await generateOneChunk(i, 1)
-          chunkVideoUrls.push(videoUrl)
+          const url = await generateOneChunk(i, 1)
+          collectedUrls.push(url)
         }
 
         // Stitch all chunks together via API
-        setStatusText(`🎬 Stitching ${totalChunks} clips together...`)
+        setStatusText(`Stitching ${totalChunks} clips together...`)
         setProgress(85)
 
         try {
           const stitchRes = await fetch('/api/stitch', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ videoUrls: chunkVideoUrls, chunks: segments?.chunks }),
+            body: JSON.stringify({ videoUrls: collectedUrls, chunks: activeSegments.chunks }),
           })
           if (stitchRes.ok) {
             const stitchData = await stitchRes.json()
             if (stitchData.videoUrl) {
               setVideoUrl(stitchData.videoUrl)
               if (stitchData.fallback) {
-                setStatusText(`✅ ${totalChunks} chunks ready (stitching unavailable — showing chunk 1)`)
+                setChunkVideoUrls(stitchData.allChunks || collectedUrls)
+                setIsFallback(true)
+                setStatusText(`${totalChunks} chunks ready (stitching unavailable)`)
               } else {
-                setStatusText('✅ Done — stitched!')
+                setStatusText('Done — stitched!')
               }
               setProgress(100)
               setIsGenerating(false)
@@ -627,9 +651,11 @@ function App() {
           // Stitch failed — fall through to fallback
         }
 
-        // Fallback: stitching unavailable, show first chunk
-        setVideoUrl(chunkVideoUrls[0])
-        setStatusText(`✅ ${totalChunks} chunks ready (stitching unavailable — showing chunk 1)`)
+        // Fallback: stitching unavailable, show all chunk videos
+        setVideoUrl(collectedUrls[0])
+        setChunkVideoUrls(collectedUrls)
+        setIsFallback(true)
+        setStatusText(`${totalChunks} chunks ready (stitching unavailable)`)
         setProgress(100)
         setIsGenerating(false)
         return
@@ -709,7 +735,7 @@ function App() {
   }
 
   const handleReset = () => {
-    setVideoUrl(null); setClaudeParams(null); setBrainDump(''); setScript(''); setError(''); setStatusText(''); setProgress(0); setIsGenerating(false)
+    setVideoUrl(null); setChunkVideoUrls([]); setIsFallback(false); setClaudeParams(null); setBrainDump(''); setScript(''); setError(''); setStatusText(''); setProgress(0); setIsGenerating(false); setSegments(null); setMarkedScript('')
     if (pollRef.current) clearInterval(pollRef.current)
   }
 
@@ -1510,10 +1536,10 @@ function App() {
                   : <>Est. cost: <span className="text-[#D4A843] font-semibold">{creditEstimate}</span></>
                 }
               </div>
-              <button onClick={handleGenerate} disabled={isGenerating || !script.trim() || (isLongForm && !segments)}
-                className={`flex items-center gap-2 px-8 py-3 rounded-xl font-bold text-sm transition-all ${!isGenerating && script.trim() && (!isLongForm || segments) ? 'bg-gradient-to-r from-[#D4A843] to-[#D4A843]/80 text-[#111827] hover:shadow-lg hover:shadow-[#D4A843]/25' : 'bg-[#1B2A4A] text-[#9CA3AF]/40 cursor-not-allowed'}`}>
+              <button onClick={handleGenerate} disabled={isGenerating || !script.trim()}
+                className={`flex items-center gap-2 px-8 py-3 rounded-xl font-bold text-sm transition-all ${!isGenerating && script.trim() ? 'bg-gradient-to-r from-[#D4A843] to-[#D4A843]/80 text-[#111827] hover:shadow-lg hover:shadow-[#D4A843]/25' : 'bg-[#1B2A4A] text-[#9CA3AF]/40 cursor-not-allowed'}`}>
                 {isGenerating ? <><Loader2 className="w-4 h-4 animate-spin" />Generating...</>
-                  : isLongForm ? `Generate ${segments?.chunks?.length || '?'} Chunks`
+                  : isLongForm ? `Generate ${segments?.chunks?.length || Math.ceil(estDurationSec / 13)} Chunks`
                   : 'Generate Video'}
               </button>
             </div>
@@ -1535,9 +1561,27 @@ function App() {
                 </button>
               </div>
             </div>
+            {isFallback && chunkVideoUrls.length > 1 && (
+              <div className="space-y-3">
+                <p className="text-xs text-[#9CA3AF]">Render server unavailable for stitching. All {chunkVideoUrls.length} clips below:</p>
+                <div className="grid grid-cols-1 gap-3">
+                  {chunkVideoUrls.map((url, i) => (
+                    <div key={i} className="bg-[#111827] rounded-lg p-3 border border-[#2A7B88]/15 flex items-center gap-3">
+                      <video src={url} className="w-32 h-auto rounded" controls />
+                      <div className="flex-1">
+                        <p className="text-sm text-[#E5E7EB]">Clip {i + 1} of {chunkVideoUrls.length}</p>
+                      </div>
+                      <a href={url} download={`clip-${i + 1}.mp4`} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[#D4A843]/20 text-[#D4A843] hover:bg-[#D4A843]/30">
+                        <Download className="w-3 h-3" />Download
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="flex justify-center gap-4">
               <a href={videoUrl} download className="flex items-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm bg-[#D4A843] text-[#111827] hover:bg-[#D4A843]/90 shadow-lg shadow-[#D4A843]/20">
-                <Download className="w-4 h-4" />Download
+                <Download className="w-4 h-4" />{isFallback ? 'Download Clip 1' : 'Download'}
               </a>
               <button onClick={handleReset} className="flex items-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm bg-[#111827] text-[#9CA3AF] border border-[#2A7B88]/30 hover:border-[#2A7B88]">
                 <RotateCcw className="w-4 h-4" />Generate Another
