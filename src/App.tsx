@@ -99,6 +99,7 @@ function App() {
   const [isSegmenting, setIsSegmenting] = useState(false)
   const [_markedScript, setMarkedScript] = useState('')
   void _markedScript // used for future display
+  const [chunkStatuses, setChunkStatuses] = useState<string[]>([])
 
   // Seedance params
   const [age, setAge] = useState(28)
@@ -562,6 +563,7 @@ function App() {
         const totalChunks = activeSegments.chunks.length
         const collectedUrls: string[] = []
         setStatusText(`Long script detected — splitting into ${totalChunks} chunks`)
+        setChunkStatuses(Array(totalChunks).fill('pending'))
 
         // Helper: generate one chunk with up to 3 retries on moderation failure
         const generateOneChunk = async (chunkIdx: number, attempt = 1): Promise<string> => {
@@ -617,8 +619,15 @@ function App() {
         for (let i = 0; i < totalChunks; i++) {
           setStatusText(`Generating clip ${i + 1} of ${totalChunks}...`)
           setProgress(10 + Math.round((i / totalChunks) * 70))
-          const url = await generateOneChunk(i, 1)
-          collectedUrls.push(url)
+          setChunkStatuses(prev => prev.map((s, idx) => idx === i ? 'generating' : s))
+          try {
+            const url = await generateOneChunk(i, 1)
+            collectedUrls.push(url)
+            setChunkStatuses(prev => prev.map((s, idx) => idx === i ? 'done' : s))
+          } catch (err) {
+            setChunkStatuses(prev => prev.map((s, idx) => idx === i ? 'error' : s))
+            throw err
+          }
         }
 
         // Stitch all chunks together via API
@@ -735,7 +744,7 @@ function App() {
   }
 
   const handleReset = () => {
-    setVideoUrl(null); setChunkVideoUrls([]); setIsFallback(false); setClaudeParams(null); setBrainDump(''); setScript(''); setError(''); setStatusText(''); setProgress(0); setIsGenerating(false); setSegments(null); setMarkedScript('')
+    setVideoUrl(null); setChunkVideoUrls([]); setIsFallback(false); setClaudeParams(null); setBrainDump(''); setScript(''); setError(''); setStatusText(''); setProgress(0); setIsGenerating(false); setSegments(null); setMarkedScript(''); setChunkStatuses([])
     if (pollRef.current) clearInterval(pollRef.current)
   }
 
@@ -1527,6 +1536,21 @@ function App() {
                 <div className="w-full h-2 bg-[#111827] rounded-full overflow-hidden">
                   <div className="h-full bg-gradient-to-r from-[#2A7B88] to-[#D4A843] rounded-full transition-all duration-500" style={{ width: `${progress}%` }} />
                 </div>
+                {chunkStatuses.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-3">
+                    {chunkStatuses.map((status, i) => (
+                      <span key={i} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-all ${
+                        status === 'done' ? 'bg-[#10B981]/20 text-[#10B981]' :
+                        status === 'generating' ? 'bg-[#D4A843]/20 text-[#D4A843]' :
+                        status === 'error' ? 'bg-red-500/20 text-red-400' :
+                        'bg-[#111827] text-[#9CA3AF]/40 border border-[#2A7B88]/15'
+                      }`}>
+                        {status === 'generating' && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+                        Clip {i + 1}{status === 'done' ? ' ✓' : status === 'error' ? ' ✗' : ''}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
             <div className="flex items-center justify-between">

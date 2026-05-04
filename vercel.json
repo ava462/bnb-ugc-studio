@@ -2,9 +2,13 @@
   "functions": {
     "api/generate.ts": { "maxDuration": 300 },
     "api/generate-longform.ts": { "maxDuration": 60 },
+    "api/segment.ts": { "maxDuration": 60 },
+    "api/stitch.ts": { "maxDuration": 60 },
     "api/status.ts": { "maxDuration": 30 },
     "api/interpret.ts": { "maxDuration": 60 },
+    "api/tts.ts": { "maxDuration": 60 },
     "api/voice-preview.ts": { "maxDuration": 30 },
+    "api/voice-models.ts": { "maxDuration": 30 },
     "api/references.ts": { "maxDuration": 30 },
     "api/upload.ts": { "maxDuration": 30 }
   }

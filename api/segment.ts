@@ -136,6 +136,11 @@ ${script}
     const cleaned = text.replace(/```json|```/g, '').trim();
     const result = JSON.parse(cleaned);
 
+    // Ensure totalDurationSec exists (Claude may omit it)
+    if (!result.totalDurationSec && result.chunks?.length) {
+      result.totalDurationSec = result.chunks.reduce((sum: number, c: any) => sum + (c.durationSec || 0), 0);
+    }
+
     // Build markedScript: full script with inline cut/transition markers
     // so the user can see exactly where cuts happen
     if (result.chunks?.length > 1) {
