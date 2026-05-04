@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 const ARCADS_BASIC_AUTH = process.env.ARCADS_BASIC_AUTH!;
 const ARCADS_PRODUCT_ID = process.env.ARCADS_PRODUCT_ID || "6ec9b8d3-8594-47c4-a468-12343bd353c4";
+console.log("[generate] ARCADS_PRODUCT_ID:", ARCADS_PRODUCT_ID);
 const FISH_AUDIO_API_KEY = process.env.FISH_AUDIO_API_KEY!;
 const FISH_AUDIO_VOICE_ID = process.env.FISH_AUDIO_VOICE_ID || '14d07e89acda4214bd319865a7e1a888';
 const JORDAN_FACE_URL = process.env.JORDAN_FACE_URL || 'https://zyiidveeixbbjpswruyn.supabase.co/storage/v1/object/public/ugc-assets/face-references/jordan-pham-hero.jpg';

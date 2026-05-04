@@ -1,6 +1,6 @@
 {
   "functions": {
-    "api/generate.ts": { "maxDuration": 300 },
+    "api/generate.ts": { "maxDuration": 60 },
     "api/generate-longform.ts": { "maxDuration": 60 },
     "api/segment.ts": { "maxDuration": 60 },
     "api/stitch.ts": { "maxDuration": 60 },
