@@ -180,7 +180,7 @@ function App() {
     setSelectedPack(null)
   }, [selectedPath])
 
-  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
+  useEffect(() => () => { pollRef.current = null }, [])
 
   // ── Load reference packs ────────────────────────────────────────────────────
 
@@ -685,6 +685,8 @@ function App() {
         throw new Error(errData.error || `Generate failed: ${res.status}`)
       }
 
+      const genCt = res.headers.get('content-type') || ''
+      if (!genCt.includes('application/json')) throw new Error(`Generate returned non-JSON response (${res.status})`)
       const genResult = await res.json()
       if (genResult.error) throw new Error(genResult.error)
 
@@ -695,7 +697,6 @@ function App() {
       if (!assetId) throw new Error('No assetId returned')
 
       const MAX_POLLS = 120 // 120 × 5s = 10 min max
-      let pollCount = 0
       const getDynamicStatus = (count: number) => {
         if (count <= 6) return 'Starting generation...'
         if (count <= 18) return 'Generating with Seedance 2.0... (3-5 min)'
@@ -703,20 +704,20 @@ function App() {
         return 'Taking longer than usual...'
       }
       setStatusText('Starting generation...')
-      pollRef.current = setInterval(async () => {
-        pollCount++
-        if (pollCount > MAX_POLLS) {
-          if (pollRef.current) clearInterval(pollRef.current)
-          setError('Generation timed out after 10 minutes. Please try again.')
-          setIsGenerating(false)
-          return
-        }
+      // Mark polling active (non-null sentinel); handleReset sets this to null to cancel
+      pollRef.current = 1 as unknown as ReturnType<typeof setInterval>
+
+      for (let pollCount = 1; pollCount <= MAX_POLLS; pollCount++) {
+        await new Promise(r => setTimeout(r, 5000))
+        if (pollRef.current === null) return  // cancelled by reset
         try {
           const statusRes = await fetch(`/api/status?assetId=${assetId}`)
-          if (!statusRes.ok) return
+          if (!statusRes.ok) continue
+          const statusCt = statusRes.headers.get('content-type') || ''
+          if (!statusCt.includes('application/json')) continue
           const statusData = await statusRes.json()
           if (statusData.status === 'complete' && statusData.videoUrl) {
-            if (pollRef.current) clearInterval(pollRef.current)
+            pollRef.current = null
             setVideoUrl(statusData.videoUrl)
             setStatusText('Complete!')
             setProgress(100)
@@ -724,7 +725,7 @@ function App() {
             return
           }
           if (statusData.status === 'failed' || statusData.status === 'error') {
-            if (pollRef.current) clearInterval(pollRef.current)
+            pollRef.current = null
             setError(statusData.error || 'Generation failed')
             setIsGenerating(false)
             return
@@ -735,7 +736,10 @@ function App() {
         } catch {
           // Keep polling on network errors
         }
-      }, 5000)
+      }
+      pollRef.current = null
+      setError('Generation timed out after 10 minutes. Please try again.')
+      setIsGenerating(false)
     } catch (err: any) {
       setError(err.message || 'Generation failed')
       setIsGenerating(false)
@@ -745,7 +749,7 @@ function App() {
 
   const handleReset = () => {
     setVideoUrl(null); setChunkVideoUrls([]); setIsFallback(false); setClaudeParams(null); setBrainDump(''); setScript(''); setError(''); setStatusText(''); setProgress(0); setIsGenerating(false); setSegments(null); setMarkedScript(''); setChunkStatuses([])
-    if (pollRef.current) clearInterval(pollRef.current)
+    pollRef.current = null
   }
 
   const creditEstimate = selectedPath === 'seedance' ? `~${Math.round(duration * 48)} credits` : '~$0.06 total'

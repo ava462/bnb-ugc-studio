@@ -17,10 +17,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const data = await r.json();
 
-    // Log full response structure for debugging
-    console.log('[status] Arcads response:', JSON.stringify({ status: data.status, id: data.id, hasUrl: !!data.url, hasVideoUrl: !!data.videoUrl, hasVideo_url: !!data.video_url }));
+    // Log full response for debugging
+    console.log('[status] Arcads full response:', JSON.stringify(data));
 
-    if (data.status === 'generated') {
+    if (['generated', 'completed', 'complete', 'done', 'success'].includes(data.status)) {
       const videoUrl = data.videoUrl || data.url || data.video_url || null;
       console.log('[status] Video complete, videoUrl:', videoUrl);
       return res.status(200).json({

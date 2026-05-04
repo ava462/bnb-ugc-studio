@@ -145,7 +145,8 @@ async function generateUGC(params: any): Promise<{ assetId: string; pollType: 'a
 
   if (!genRes.ok) throw new Error(`Seedance error: ${await genRes.text()}`);
   const data = await genRes.json();
-  return { assetId: data.id, pollType: 'arcads_asset' };
+  console.log('[generate:ugc] Arcads response:', JSON.stringify(data));
+  return { assetId: data.id ?? data.assetId ?? data.asset_id, pollType: 'arcads_asset' };
 }
 
 // ── Path 2: Custom (Seedance + character pack from reference_packs table) ──
@@ -267,7 +268,8 @@ async function generateCustom(params: any): Promise<{ assetId: string; pollType:
   }
 
   const data = await genRes.json();
-  return { assetId: data.id, pollType: 'arcads_asset' };
+  console.log('[generate:custom] Arcads response:', JSON.stringify(data));
+  return { assetId: data.id ?? data.assetId ?? data.asset_id, pollType: 'arcads_asset' };
 }
 
 // ── Main Handler ──
