@@ -600,7 +600,7 @@ function App() {
         }
 
         // Stitch all chunks together via API
-        setStatusText('🎬 Stitching chunks together...')
+        setStatusText(`🎬 Stitching ${totalChunks} clips together...`)
         setProgress(85)
 
         try {
@@ -613,7 +613,11 @@ function App() {
             const stitchData = await stitchRes.json()
             if (stitchData.videoUrl) {
               setVideoUrl(stitchData.videoUrl)
-              setStatusText('✅ Done!')
+              if (stitchData.fallback) {
+                setStatusText(`✅ ${totalChunks} chunks ready (stitching unavailable — showing chunk 1)`)
+              } else {
+                setStatusText('✅ Done — stitched!')
+              }
               setProgress(100)
               setIsGenerating(false)
               return

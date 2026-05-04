@@ -18,17 +18,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const stitchRes = await fetch(`${RENDER_SERVER}${endpoint}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
       body: JSON.stringify({ videoUrls, chunks }),
     });
 
     if (stitchRes.ok) {
+      const contentType = stitchRes.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        // Cloudflare tunnel returned HTML challenge instead of JSON
+        const body = await stitchRes.text();
+        console.error(`[stitch] Got non-JSON response (${contentType}): ${body.slice(0, 200)}`);
+        return res.json({
+          videoUrl: videoUrls[0],
+          allChunks: videoUrls,
+          fallback: true,
+          note: `Render server returned HTML instead of JSON (Cloudflare tunnel challenge). Content-Type: ${contentType}`,
+        });
+      }
       const data = await stitchRes.json();
       if (data.videoUrl) return res.json(data);
+    } else {
+      const body = await stitchRes.text().catch(() => '');
+      console.error(`[stitch] Render server error ${stitchRes.status}: ${body.slice(0, 200)}`);
     }
 
-    // Render server unavailable — try stitching by downloading + uploading
-    // as a simple concatenation via Supabase (no ffmpeg, just first chunk as fallback)
+    // Render server unavailable — fallback to first chunk
     return res.json({
       videoUrl: videoUrls[0],
       allChunks: videoUrls,
@@ -36,6 +53,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       note: 'Render server unavailable for stitching. Showing first chunk. Start render server: cd ~/Projects/bnb-video-engine && npx tsx render/server.ts',
     });
   } catch (err: any) {
+    console.error(`[stitch] Fetch error: ${err.message}`);
     return res.json({
       videoUrl: videoUrls[0],
       allChunks: videoUrls,
