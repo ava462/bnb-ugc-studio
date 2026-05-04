@@ -18,10 +18,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const data = await r.json();
 
     // Log full response for debugging
-    console.log('[status] Arcads full response:', JSON.stringify(data));
+    console.log('[status] Arcads status:', data.status, 'hasUrl:', !!(data.url || data.videoUrl || data.video_url));
 
-    if (['generated', 'completed', 'complete', 'done', 'success'].includes(data.status)) {
-      const videoUrl = data.videoUrl || data.url || data.video_url || null;
+    const videoUrl = data.videoUrl || data.url || data.video_url || null;
+
+    // Mark complete if status says done OR if a video URL is already present
+    if (['generated', 'completed', 'complete', 'done', 'success'].includes(data.status) || videoUrl) {
       console.log('[status] Video complete, videoUrl:', videoUrl);
       return res.status(200).json({
         status: 'complete',
