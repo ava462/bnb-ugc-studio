@@ -139,7 +139,7 @@ async function generateUGC(params: any): Promise<{ assetId: string; pollType: 'a
       aspectRatio: api.aspectRatio || '9:16',
       duration,
       resolution: api.resolution || '720p',
-      productId: ARCADS_PRODUCT_ID,
+      productId: "6ec9b8d3-8594-47c4-a468-12343bd353c4", // hardcoded — env var unreliable on Vercel hobby
       ...(referenceImages.length ? { referenceImages } : {}),
     }),
   });
@@ -237,7 +237,7 @@ async function generateCustom(params: any): Promise<{ assetId: string; pollType:
     duration,
     resolution: api.resolution || '720p',
     audioEnabled: true,
-    productId: ARCADS_PRODUCT_ID,
+    productId: "6ec9b8d3-8594-47c4-a468-12343bd353c4", // hardcoded — env var unreliable on Vercel hobby
     referenceImages,
     ...(referenceAudios ? { referenceAudios } : {}),
   };
